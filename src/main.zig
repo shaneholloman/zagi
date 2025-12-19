@@ -5,6 +5,7 @@ const status = @import("cmds/status.zig");
 const add = @import("cmds/add.zig");
 const alias = @import("cmds/alias.zig");
 const commit = @import("cmds/commit.zig");
+const diff = @import("cmds/diff.zig");
 const git = @import("cmds/git.zig");
 
 const version = "0.1.0";
@@ -15,6 +16,7 @@ const Command = enum {
     add_cmd,
     alias_cmd,
     commit_cmd,
+    diff_cmd,
     other,
 };
 
@@ -76,6 +78,9 @@ fn run() !void {
     } else if (std.mem.eql(u8, cmd, "commit")) {
         current_command = .commit_cmd;
         try commit.run(allocator, args);
+    } else if (std.mem.eql(u8, cmd, "diff")) {
+        current_command = .diff_cmd;
+        try diff.run(allocator, args);
     } else {
         // Unknown command: pass through to git
         current_command = .other;
@@ -92,6 +97,7 @@ fn printHelp(stdout: anytype) !void {
         \\commands:
         \\  status    Show working tree status (concise)
         \\  log       Show commit history (concise)
+        \\  diff      Show changes (concise)
         \\  add       Stage files for commit
         \\  commit    Create a commit
         \\  alias     Add zagi as a git alias to your shell
@@ -178,6 +184,7 @@ fn printUsageHelp(stderr: anytype, cmd: Command) void {
         .status_cmd => status.help,
         .log_cmd => log.help,
         .alias_cmd => alias.help,
+        .diff_cmd => diff.help,
         .other => "usage: zagi <command> [args...]\n",
     };
 

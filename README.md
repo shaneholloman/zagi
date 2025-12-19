@@ -1,6 +1,6 @@
 # zagi
 
-> a better git for agents
+> a git interface for agents
 
 ### Context Window
 - Traditional `git log` outputs are verbose and consume significant token space
