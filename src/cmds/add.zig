@@ -16,6 +16,18 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{Wri
     _ = allocator;
     const stdout = std.fs.File.stdout().deprecatedWriter();
 
+    // Check for unsupported flags first
+    for (args[2..]) |arg| {
+        const a = std.mem.sliceTo(arg, 0);
+        if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
+            stdout.print("{s}", .{help}) catch {};
+            return;
+        } else if (std.mem.startsWith(u8, a, "-")) {
+            // Interactive flags (-p, -i, etc.) not supported
+            return git.Error.UnsupportedFlag;
+        }
+    }
+
     // Initialize libgit2
     if (c.git_libgit2_init() < 0) {
         return git.Error.InitFailed;

@@ -41,6 +41,12 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) git.Error!void {
             amend = true;
         } else if (std.mem.eql(u8, arg, "-a") or std.mem.eql(u8, arg, "--all")) {
             all = true;
+        } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+            stdout.print("{s}", .{help}) catch {};
+            return;
+        } else if (std.mem.startsWith(u8, arg, "-") or std.mem.startsWith(u8, arg, "--")) {
+            // Unknown flag (--allow-empty, --no-verify, etc.) - passthrough to git
+            return git.Error.UnsupportedFlag;
         }
     }
 

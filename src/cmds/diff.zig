@@ -123,6 +123,9 @@ pub fn run(_: std.mem.Allocator, args: [][:0]u8) DiffError!void {
         } else if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
             stdout.print("{s}", .{help}) catch {};
             return;
+        } else if (std.mem.startsWith(u8, a, "-")) {
+            // Unknown flag (--stat, --name-only, -p, etc.) - passthrough to git
+            return git.Error.UnsupportedFlag;
         } else if (!std.mem.startsWith(u8, a, "-")) {
             // Non-flag argument is a revision spec
             rev_spec = a;

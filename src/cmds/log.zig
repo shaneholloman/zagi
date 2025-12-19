@@ -33,6 +33,16 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{Out
             opts.max_count = std.fmt.parseInt(usize, arg[2..], 10) catch 10;
         } else if (std.mem.startsWith(u8, arg, "--max-count=")) {
             opts.max_count = std.fmt.parseInt(usize, arg[12..], 10) catch 10;
+        } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+            stdout.print("{s}", .{help}) catch {};
+            return;
+        } else if (std.mem.startsWith(u8, arg, "-") or std.mem.startsWith(u8, arg, "--")) {
+            // Unknown flag - passthrough to git
+            return git.Error.UnsupportedFlag;
+        }
+        // Non-flag arguments (revisions, paths) also unsupported for now
+        else if (!std.mem.startsWith(u8, arg, "-")) {
+            return git.Error.UnsupportedFlag;
         }
     }
 

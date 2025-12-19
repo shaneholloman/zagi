@@ -23,18 +23,26 @@ const Command = enum {
 var current_command: Command = .other;
 
 pub fn main() void {
-    run() catch |err| {
-        handleError(err, current_command);
-    };
-}
-
-fn run() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
+    const args = std.process.argsAlloc(allocator) catch {
+        std.process.exit(1);
+    };
     defer std.process.argsFree(allocator, args);
+
+    run(allocator, args) catch |err| {
+        // UnsupportedFlag: pass through to git
+        if (err == git.Error.UnsupportedFlag) {
+            passthrough.run(allocator, args) catch {};
+            return;
+        }
+        handleError(err, current_command);
+    };
+}
+
+fn run(allocator: std.mem.Allocator, args: [][:0]u8) !void {
 
     const stdout = std.fs.File.stdout().deprecatedWriter();
 

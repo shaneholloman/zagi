@@ -14,6 +14,7 @@ pub const Error = error{
     AddFailed,
     NothingToCommit,
     CommitFailed,
+    UnsupportedFlag,
 };
 
 pub fn indexMarker(status: c_uint) []const u8 {
