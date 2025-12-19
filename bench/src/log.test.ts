@@ -44,9 +44,9 @@ describe("zagi log", () => {
     expect(commitLines.length).toBeLessThanOrEqual(3);
   });
 
-  test("--full produces verbose output", () => {
+  test("passthrough -g gives full git output", () => {
     const concise = runCommand(ZAGI_BIN, ["log", "-n", "1"]);
-    const full = runCommand(ZAGI_BIN, ["log", "--full", "-n", "1"]);
+    const full = runCommand(ZAGI_BIN, ["-g", "log", "-n", "1"]);
 
     expect(full.length).toBeGreaterThan(concise.length);
     expect(full).toContain("Author:");

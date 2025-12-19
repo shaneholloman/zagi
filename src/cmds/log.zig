@@ -3,19 +3,19 @@ const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
 
 pub const help =
-    \\usage: zagi log [-n <count>] [--full]
+    \\usage: zagi log [-n <count>]
     \\
     \\Show commit history.
     \\
     \\Options:
     \\  -n <count>  Limit to n commits (default: 10)
-    \\  --full      Show full commit details
+    \\
+    \\For full git output, use: zagi -g log
     \\
 ;
 
 const Options = struct {
     max_count: usize = 10,
-    full: bool = false,
 };
 
 pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{OutOfMemory})!void {
@@ -26,9 +26,7 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{Out
     var i: usize = 2; // skip "zagi" and "log"
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--full")) {
-            opts.full = true;
-        } else if (std.mem.eql(u8, arg, "-n") or std.mem.eql(u8, arg, "--max-count")) {
+        if (std.mem.eql(u8, arg, "-n") or std.mem.eql(u8, arg, "--max-count")) {
             i += 1;
             if (i < args.len) {
                 opts.max_count = std.fmt.parseInt(usize, args[i], 10) catch 10;
@@ -99,9 +97,9 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{Out
     }
 
     // Show truncation message
-    if (!opts.full and total > opts.max_count) {
+    if (total > opts.max_count) {
         const remaining = total - opts.max_count;
-        stdout.print("\n[{d} more commits, use -n to see more or --full for details]\n", .{remaining}) catch return git.Error.WriteFailed;
+        stdout.print("\n[{d} more commits, use -n to see more]\n", .{remaining}) catch return git.Error.WriteFailed;
     }
 }
 
@@ -110,7 +108,7 @@ fn printCommit(
     writer: anytype,
     commit: *c.git_commit,
     oid: *const c.git_oid,
-    opts: Options,
+    _: Options,
 ) !void {
     var sha_buf: [41]u8 = undefined;
     _ = c.git_oid_tostr(&sha_buf, sha_buf.len, oid);
@@ -125,40 +123,20 @@ fn printCommit(
 
     const author = c.git_commit_author(commit);
 
-    if (opts.full) {
-        try writer.print("commit {s}\n", .{sha});
+    // Concise format: abc123f (2025-01-15) Alice: Add user authentication
+    if (author) |a| {
+        const full_name = if (a.*.name) |n| std.mem.sliceTo(n, 0) else "Unknown";
+        const first_name = if (std.mem.indexOf(u8, full_name, " ")) |idx|
+            full_name[0..idx]
+        else
+            full_name;
 
-        if (author) |a| {
-            const name = if (a.*.name) |n| std.mem.sliceTo(n, 0) else "Unknown";
-            const email = if (a.*.email) |e| std.mem.sliceTo(e, 0) else "";
-            try writer.print("Author: {s} <{s}>\n", .{ name, email });
-            try printFormattedDate(writer, a.*.when.time, a.*.when.offset);
-        }
+        const date_str = try formatDate(allocator, a.*.when.time);
+        defer allocator.free(date_str);
 
-        try writer.print("\n", .{});
-        var lines = std.mem.splitScalar(u8, message, '\n');
-        while (lines.next()) |line| {
-            if (line.len > 0) {
-                try writer.print("    {s}\n", .{line});
-            }
-        }
-        try writer.print("\n", .{});
+        try writer.print("{s} ({s}) {s}: {s}\n", .{ sha[0..7], date_str, first_name, subject });
     } else {
-        // Concise format: abc123f (2025-01-15) Alice: Add user authentication
-        if (author) |a| {
-            const full_name = if (a.*.name) |n| std.mem.sliceTo(n, 0) else "Unknown";
-            const first_name = if (std.mem.indexOf(u8, full_name, " ")) |idx|
-                full_name[0..idx]
-            else
-                full_name;
-
-            const date_str = try formatDate(allocator, a.*.when.time);
-            defer allocator.free(date_str);
-
-            try writer.print("{s} ({s}) {s}: {s}\n", .{ sha[0..7], date_str, first_name, subject });
-        } else {
-            try writer.print("{s} {s}\n", .{ sha[0..7], subject });
-        }
+        try writer.print("{s} {s}\n", .{ sha[0..7], subject });
     }
 }
 
@@ -178,48 +156,6 @@ fn formatDate(allocator: std.mem.Allocator, timestamp: i64) ![]u8 {
     const year: i64 = if (m <= 2) y + 1 else y;
 
     return std.fmt.allocPrint(allocator, "{d}-{d:0>2}-{d:0>2}", .{ year, m, d });
-}
-
-fn printFormattedDate(writer: anytype, timestamp: i64, offset: c_int) !void {
-    const SECONDS_PER_DAY: i64 = 86400;
-    const days = @divFloor(timestamp, SECONDS_PER_DAY) + 719468;
-
-    const era: i64 = @divFloor(if (days >= 0) days else days - 146096, 146097);
-    const doe: u32 = @intCast(days - era * 146097);
-    const yoe: u32 = @intCast(@divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365));
-    const y: i64 = @as(i64, yoe) + era * 400;
-    const doy: u32 = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
-    const mp: u32 = @divFloor(5 * doy + 2, 153);
-    const d: u32 = doy - @divFloor(153 * mp + 2, 5) + 1;
-    const m: u32 = if (mp < 10) mp + 3 else mp - 9;
-
-    const year: i64 = if (m <= 2) y + 1 else y;
-
-    const dow: usize = @intCast(@mod(@divFloor(timestamp, SECONDS_PER_DAY) + 4, 7));
-    const day_names = [_][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-    const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-
-    const secs_in_day: u64 = @intCast(@mod(timestamp, SECONDS_PER_DAY));
-    const hours: u64 = secs_in_day / 3600;
-    const mins: u64 = (secs_in_day % 3600) / 60;
-    const secs: u64 = secs_in_day % 60;
-
-    const offset_hours = @divTrunc(offset, 60);
-    const offset_mins: u32 = @intCast(@abs(@mod(offset, 60)));
-    const sign: u8 = if (offset >= 0) '+' else '-';
-
-    try writer.print("Date:   {s} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} {d} {c}{d:0>2}{d:0>2}\n", .{
-        day_names[dow],
-        month_names[m - 1],
-        d,
-        hours,
-        mins,
-        secs,
-        year,
-        sign,
-        @as(u32, @intCast(@abs(offset_hours))),
-        offset_mins,
-    });
 }
 
 // Tests
@@ -262,37 +198,4 @@ test "formatDate - year 2000" {
     const result = try formatDate(allocator, 946684800);
     defer allocator.free(result);
     try testing.expectEqualStrings("2000-01-01", result);
-}
-
-test "printFormattedDate - basic format" {
-    var buf: [100]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const writer = fbs.writer();
-
-    // 2025-01-15 14:30:45 UTC
-    try printFormattedDate(writer, 1736951445, 0);
-    const result = fbs.getWritten();
-    try testing.expectEqualStrings("Date:   Wed Jan 15 14:30:45 2025 +0000\n", result);
-}
-
-test "printFormattedDate - negative timezone" {
-    var buf: [100]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const writer = fbs.writer();
-
-    // 2025-01-15 14:30:45 UTC, -0800 offset
-    try printFormattedDate(writer, 1736951445, -480);
-    const result = fbs.getWritten();
-    try testing.expectEqualStrings("Date:   Wed Jan 15 14:30:45 2025 -0800\n", result);
-}
-
-test "printFormattedDate - positive timezone" {
-    var buf: [100]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const writer = fbs.writer();
-
-    // 2025-01-15 14:30:45 UTC, +0530 offset
-    try printFormattedDate(writer, 1736951445, 330);
-    const result = fbs.getWritten();
-    try testing.expectEqualStrings("Date:   Wed Jan 15 14:30:45 2025 +0530\n", result);
 }

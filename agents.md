@@ -203,6 +203,20 @@ bench/
     add.test.ts      # add tests & benchmarks
 ```
 
+## Design Decisions
+
+### No `--full` or `--verbose` flags
+
+Zagi commands only output concise, agent-optimized formats. We don't provide flags like `--full` or `--verbose` to get git's standard output.
+
+**Reasoning:** If a user wants the full git output, they can use the passthrough flag:
+```bash
+zagi -g log    # runs: git log
+zagi -g diff   # runs: git diff
+```
+
+This avoids duplicating git's output formatting in zagi. Every zagi command should do one thing well: provide a concise format optimized for agents.
+
 ## Checklist for new commands
 
 - [ ] Investigate git command behavior
