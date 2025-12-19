@@ -167,3 +167,96 @@ fn printCallback(
 
     return 0;
 }
+
+pub fn formatHunkHeader(writer: anytype, file: []const u8, start: u32, lines: u32) !void {
+    if (lines > 1) {
+        try writer.print("{s}:{d}-{d}\n", .{ file, start, start + lines - 1 });
+    } else {
+        try writer.print("{s}:{d}\n", .{ file, start });
+    }
+}
+
+pub fn formatDiffLine(writer: anytype, is_addition: bool, content: []const u8) !void {
+    const prefix: u8 = if (is_addition) '+' else '-';
+    const trimmed = std.mem.trimRight(u8, content, "\n\r");
+    try writer.print("{c} {s}\n", .{ prefix, trimmed });
+}
+
+pub fn formatNoChanges(writer: anytype) !void {
+    try writer.print("no changes\n", .{});
+}
+
+// Tests
+const testing = std.testing;
+
+test "formatHunkHeader single line" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatHunkHeader(output.writer(), "src/main.zig", 42, 1);
+
+    try testing.expectEqualStrings("src/main.zig:42\n", output.items);
+}
+
+test "formatHunkHeader multiple lines" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatHunkHeader(output.writer(), "src/main.zig", 10, 5);
+
+    try testing.expectEqualStrings("src/main.zig:10-14\n", output.items);
+}
+
+test "formatHunkHeader line range at line 1" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatHunkHeader(output.writer(), "README.md", 1, 3);
+
+    try testing.expectEqualStrings("README.md:1-3\n", output.items);
+}
+
+test "formatDiffLine addition" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatDiffLine(output.writer(), true, "const x = 42;");
+
+    try testing.expectEqualStrings("+ const x = 42;\n", output.items);
+}
+
+test "formatDiffLine deletion" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatDiffLine(output.writer(), false, "const x = 0;");
+
+    try testing.expectEqualStrings("- const x = 0;\n", output.items);
+}
+
+test "formatDiffLine trims trailing newline" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatDiffLine(output.writer(), true, "hello world\n");
+
+    try testing.expectEqualStrings("+ hello world\n", output.items);
+}
+
+test "formatDiffLine trims trailing CRLF" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatDiffLine(output.writer(), false, "windows line\r\n");
+
+    try testing.expectEqualStrings("- windows line\n", output.items);
+}
+
+test "formatNoChanges" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatNoChanges(output.writer());
+
+    try testing.expectEqualStrings("no changes\n", output.items);
+}
