@@ -2,55 +2,68 @@ import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { resolve } from "path";
 
-const FIXTURE_DIR = resolve(__dirname, "test-repo");
+const FIXTURES_BASE = resolve(__dirname, "repos");
 const COMMIT_COUNT = 100;
 
-function git(...args: string[]) {
-  execFileSync("git", args, { cwd: FIXTURE_DIR, stdio: "pipe" });
+// Each caller gets a unique repo
+let repoCounter = 0;
+
+function gitIn(repoDir: string, ...args: string[]) {
+  execFileSync("git", args, { cwd: repoDir, stdio: "pipe" });
 }
 
-export function setupFixtureRepo() {
-  // Clean up if exists
-  if (existsSync(FIXTURE_DIR)) {
-    rmSync(FIXTURE_DIR, { recursive: true });
+/**
+ * Creates a new isolated fixture repo and returns its path.
+ * Each call creates a fresh repo with unique ID.
+ */
+export function createFixtureRepo(): string {
+  const repoId = `repo-${repoCounter++}-${Date.now()}`;
+  const repoDir = resolve(FIXTURES_BASE, repoId);
+
+  // Ensure base directory exists
+  mkdirSync(FIXTURES_BASE, { recursive: true });
+
+  // Clean up if exists (shouldn't happen with unique IDs but just in case)
+  if (existsSync(repoDir)) {
+    rmSync(repoDir, { recursive: true });
   }
 
   // Create directory
-  mkdirSync(FIXTURE_DIR, { recursive: true });
+  mkdirSync(repoDir, { recursive: true });
 
   // Initialize git repo
-  git("init");
-  git("config", "user.email", "test@example.com");
-  git("config", "user.name", "Test User");
+  gitIn(repoDir, "init");
+  gitIn(repoDir, "config", "user.email", "test@example.com");
+  gitIn(repoDir, "config", "user.name", "Test User");
 
   // Create initial structure
-  mkdirSync(resolve(FIXTURE_DIR, "src"));
-  mkdirSync(resolve(FIXTURE_DIR, "tests"));
-  mkdirSync(resolve(FIXTURE_DIR, "docs"));
+  mkdirSync(resolve(repoDir, "src"));
+  mkdirSync(resolve(repoDir, "tests"));
+  mkdirSync(resolve(repoDir, "docs"));
 
   writeFileSync(
-    resolve(FIXTURE_DIR, "README.md"),
+    resolve(repoDir, "README.md"),
     "# Test Repository\n\nThis is a fixture for benchmarking.\n"
   );
 
   writeFileSync(
-    resolve(FIXTURE_DIR, "src/main.ts"),
+    resolve(repoDir, "src/main.ts"),
     'export function main() {\n  console.log("hello");\n}\n'
   );
 
   writeFileSync(
-    resolve(FIXTURE_DIR, "src/utils.ts"),
+    resolve(repoDir, "src/utils.ts"),
     "export function add(a: number, b: number) {\n  return a + b;\n}\n"
   );
 
   writeFileSync(
-    resolve(FIXTURE_DIR, "tests/main.test.ts"),
+    resolve(repoDir, "tests/main.test.ts"),
     'import { main } from "../src/main";\n\ntest("main runs", () => {\n  main();\n});\n'
   );
 
   // Initial commit
-  git("add", ".");
-  git("commit", "-m", "Initial commit");
+  gitIn(repoDir, "add", ".");
+  gitIn(repoDir, "commit", "-m", "Initial commit");
 
   // Generate commits with varied content
   const actions = [
@@ -84,7 +97,7 @@ export function setupFixtureRepo() {
     // Modify a file
     const fileNum = i % 3;
     const files = ["src/main.ts", "src/utils.ts", "README.md"];
-    const filePath = resolve(FIXTURE_DIR, files[fileNum]);
+    const filePath = resolve(repoDir, files[fileNum]);
 
     const content =
       existsSync(filePath) && fileNum !== 2
@@ -94,38 +107,25 @@ export function setupFixtureRepo() {
         : `# Test Repository\n\nChange ${i}\n`;
 
     writeFileSync(filePath, content);
-    git("add", ".");
-    git("commit", "-m", message);
+    gitIn(repoDir, "add", ".");
+    gitIn(repoDir, "commit", "-m", message);
   }
 
   // Create some uncommitted changes for status tests
-  writeFileSync(resolve(FIXTURE_DIR, "src/new-file.ts"), "// New file\n");
+  writeFileSync(resolve(repoDir, "src/new-file.ts"), "// New file\n");
   writeFileSync(
-    resolve(FIXTURE_DIR, "src/main.ts"),
-    readFileSync(resolve(FIXTURE_DIR, "src/main.ts"), "utf-8") + "\n// Modified\n"
+    resolve(repoDir, "src/main.ts"),
+    readFileSync(resolve(repoDir, "src/main.ts"), "utf-8") + "\n// Modified\n"
   );
 
-  console.log(`Created fixture repo with ${COMMIT_COUNT} commits`);
-  console.log(`Location: ${FIXTURE_DIR}`);
+  return repoDir;
 }
 
-export function getFixturePath() {
-  return FIXTURE_DIR;
-}
-
-export function ensureFixture() {
-  if (!existsSync(resolve(FIXTURE_DIR, ".git"))) {
-    setupFixtureRepo();
+/**
+ * Cleans up all fixture repos
+ */
+export function cleanupFixtures() {
+  if (existsSync(FIXTURES_BASE)) {
+    rmSync(FIXTURES_BASE, { recursive: true });
   }
-  return FIXTURE_DIR;
-}
-
-// Vitest global setup hook
-export default function setup() {
-  ensureFixture();
-}
-
-// Run setup if called directly
-if (require.main === module) {
-  setupFixtureRepo();
 }

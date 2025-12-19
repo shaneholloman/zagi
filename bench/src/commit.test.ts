@@ -1,12 +1,11 @@
-import { describe, test, expect, beforeAll, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "child_process";
 import { resolve } from "path";
-import { writeFileSync } from "fs";
-import { ensureFixture } from "../fixtures/setup";
+import { writeFileSync, rmSync } from "fs";
+import { createFixtureRepo } from "../fixtures/setup";
 
 const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
-let ORIGINAL_HEAD: string;
 
 interface CommandResult {
   output: string;
@@ -41,34 +40,20 @@ function runCommand(
   }
 }
 
-function reset() {
-  try {
-    // Reset to original HEAD to undo any commits we made
-    execFileSync("git", ["reset", "--hard", ORIGINAL_HEAD], { cwd: REPO_DIR });
-    // Clean up any untracked files we created
-    execFileSync("git", ["clean", "-fd"], { cwd: REPO_DIR });
-    // Recreate the expected uncommitted changes
-    writeFileSync(resolve(REPO_DIR, "src/new-file.ts"), "// New file\n");
-  } catch {}
-}
-
 function stageTestFile() {
   const testFile = resolve(REPO_DIR, "commit-test.txt");
   writeFileSync(testFile, `test content ${Date.now()}\n`);
   execFileSync("git", ["add", "commit-test.txt"], { cwd: REPO_DIR });
 }
 
-beforeAll(() => {
-  REPO_DIR = ensureFixture();
-  // Save the original HEAD so we can reset to it
-  ORIGINAL_HEAD = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: REPO_DIR,
-    encoding: "utf-8",
-  }).trim();
+beforeEach(() => {
+  REPO_DIR = createFixtureRepo();
 });
 
 afterEach(() => {
-  reset();
+  if (REPO_DIR) {
+    rmSync(REPO_DIR, { recursive: true, force: true });
+  }
 });
 
 describe("zagi commit", () => {
@@ -116,11 +101,14 @@ describe("zagi commit", () => {
   });
 
   test("zagi commit output is more concise than git", () => {
+    // Stage and commit with zagi first
     stageTestFile();
     const zagiResult = runCommand(ZAGI_BIN, ["commit", "-m", "Zagi commit"]);
 
-    reset();
-    stageTestFile();
+    // Stage another file and commit with git
+    const testFile2 = resolve(REPO_DIR, "commit-test-2.txt");
+    writeFileSync(testFile2, `test content 2 ${Date.now()}\n`);
+    execFileSync("git", ["add", "commit-test-2.txt"], { cwd: REPO_DIR });
     const gitResult = runCommand("git", ["commit", "-m", "Git commit"]);
 
     // zagi should have shorter output
@@ -145,8 +133,11 @@ describe("performance", () => {
     const times: number[] = [];
 
     for (let i = 0; i < iterations; i++) {
-      reset();
-      stageTestFile();
+      // Stage a unique file for each iteration
+      const testFile = resolve(REPO_DIR, `perf-test-${i}.txt`);
+      writeFileSync(testFile, `perf test ${i} ${Date.now()}\n`);
+      execFileSync("git", ["add", `perf-test-${i}.txt`], { cwd: REPO_DIR });
+
       const start = performance.now();
       execFileSync(ZAGI_BIN, ["commit", "-m", `Perf test ${i}`], {
         cwd: REPO_DIR,

@@ -1,7 +1,8 @@
-import { describe, test, expect, beforeAll } from "vitest";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "child_process";
 import { resolve } from "path";
-import { ensureFixture } from "../fixtures/setup";
+import { rmSync } from "fs";
+import { createFixtureRepo } from "../fixtures/setup";
 
 const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
@@ -30,8 +31,14 @@ function runCommand(cmd: string, args: string[]): CommandResult {
   };
 }
 
-beforeAll(() => {
-  REPO_DIR = ensureFixture();
+beforeEach(() => {
+  REPO_DIR = createFixtureRepo();
+});
+
+afterEach(() => {
+  if (REPO_DIR) {
+    rmSync(REPO_DIR, { recursive: true, force: true });
+  }
 });
 
 describe("zagi log", () => {
