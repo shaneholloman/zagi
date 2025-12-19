@@ -7,6 +7,8 @@ const alias = @import("cmds/alias.zig");
 const commit = @import("cmds/commit.zig");
 const git = @import("cmds/git.zig");
 
+const version = "0.1.0";
+
 const Command = enum {
     log_cmd,
     status_cmd,
@@ -32,14 +34,33 @@ fn run() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
+    const stdout = std.fs.File.stdout().deprecatedWriter();
+
     if (args.len < 2) {
-        const stderr = std.fs.File.stderr().deprecatedWriter();
-        stderr.print("usage: zagi <command> [args...]\n", .{}) catch {};
-        std.process.exit(1);
+        printHelp(stdout) catch {};
+        return;
     }
 
     const cmd = args[1];
 
+    // Handle global flags
+    if (std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h") or std.mem.eql(u8, cmd, "help")) {
+        printHelp(stdout) catch {};
+        return;
+    }
+
+    if (std.mem.eql(u8, cmd, "--version") or std.mem.eql(u8, cmd, "-v")) {
+        stdout.print("zagi {s}\n", .{version}) catch {};
+        return;
+    }
+
+    // Passthrough mode: -g/--git passes remaining args directly to git
+    if (std.mem.eql(u8, cmd, "-g") or std.mem.eql(u8, cmd, "--git")) {
+        try passthrough.run(allocator, args[1..]);
+        return;
+    }
+
+    // Zagi commands
     if (std.mem.eql(u8, cmd, "log")) {
         current_command = .log_cmd;
         try log.run(allocator, args);
@@ -56,9 +77,33 @@ fn run() !void {
         current_command = .commit_cmd;
         try commit.run(allocator, args);
     } else {
+        // Unknown command: pass through to git
         current_command = .other;
         try passthrough.run(allocator, args);
     }
+}
+
+fn printHelp(stdout: anytype) !void {
+    try stdout.print(
+        \\zagi - git for agents
+        \\
+        \\usage: zagi <command> [args...]
+        \\
+        \\commands:
+        \\  status    Show working tree status (concise)
+        \\  log       Show commit history (concise)
+        \\  add       Stage files for commit
+        \\  commit    Create a commit
+        \\  alias     Add zagi as a git alias to your shell
+        \\
+        \\options:
+        \\  -h, --help     Show this help
+        \\  -v, --version  Show version
+        \\  -g, --git      Pass command directly to git
+        \\
+        \\Any unrecognized command is passed through to git.
+        \\
+    , .{});
 }
 
 fn handleError(err: anyerror, cmd: Command) void {
