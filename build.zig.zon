@@ -1,10 +1,12 @@
 .{
-    .name = "zagi",
-    .version = "0.1.0",
-    .dependencies = .{},
-    .paths = .{
-        "build.zig",
-        "build.zig.zon",
-        "src",
+    .name = .zagi,
+    .version = "0.15.2",
+    .dependencies = .{
+        .libgit2 = .{
+            .url = "git+https://github.com/allyourcodebase/libgit2#58dfd002d47a8c9fbd99d4a939cb343172590e1b",
+            .hash = "libgit2-1.9.0-uizqTQnZAADyPOmBklxzj_lrnfJoRLRDBbbTvi28SrZX",
+        },
     },
+    .paths = .{""},
+    .fingerprint = 0x72011a6fbd0cd577,
 }

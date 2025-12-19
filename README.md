@@ -1,28 +1,23 @@
-# zagi - Zero-context Agent Git Interface
+# zagi
 
-## Problem
+> a better git for agents
 
-AI agents struggle with Git operations due to several fundamental issues:
-
-### Context Window Limitations
+### Context Window
 - Traditional `git log` outputs are verbose and consume significant token space
 - Large repositories with extensive commit histories quickly exhaust agent context windows
 - Agents need to process Git information frequently, making every byte count
 
-### Reliability Concerns
-- Git operations may fail due to network issues, locks, or transient errors
+### Reliability
 - Agents lack robust retry mechanisms and can get stuck on recoverable failures
 - Non-idempotent operations create inconsistent states when retried blindly
 
-### Training Compatibility
+### Interactivity
+- Zagi is not interactive, it is designed for agents. They can compose abitarily complex commands and zagi will execute them idempotently.
+
+### Training Data
 - Agents are pre-trained on standard Git command syntax
 - Custom tools with different interfaces require additional prompting and reduce reliability
 - Breaking from familiar patterns increases error rates and confusion
-
-### Performance Requirements
-- Agents make many small, repeated Git queries during workflows
-- Traditional Git commands have overhead that accumulates across operations
-- Large binaries and dependencies increase deployment complexity
 
 ## Solution
 
@@ -55,46 +50,8 @@ AI agents struggle with Git operations due to several fundamental issues:
 
 ## Architecture
 
-### Core Components
-
-```
-┌─────────────────────────────────────────┐
-│           Agent Interface               │
-│    (Git-compatible command parsing)     │
-└───────────────┬─────────────────────────┘
-                │
-┌───────────────▼─────────────────────────┐
-│        Command Router                   │
-│   (Dispatch to optimized handlers)      │
-└───────────────┬─────────────────────────┘
-                │
-    ┌───────────┼───────────┐
-    │           │           │
-┌───▼───┐  ┌───▼───┐  ┌───▼────┐
-│  Log  │  │ Status│  │ Future │
-│Handler│  │Handler│  │Commands│
-└───┬───┘  └───┬───┘  └───┬────┘
-    │          │          │
-    └──────────┼──────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│       Truncation Engine                 │
-│  - Token counting                       │
-│  - Smart summarization                  │
-│  - Priority-based filtering             │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│       Git Process Manager               │
-│  - Subprocess execution                 │
-│  - Retry logic                          │
-│  - Error handling                       │
-└─────────────────────────────────────────┘
-```
-
 ### Design Principles
 
-1. **Wrap, Don't Replace**: Call native Git for actual operations, focus on output optimization
 2. **Progressive Enhancement**: Start with high-value commands (log), expand over time
 3. **Zero Config**: Sensible defaults that work out of the box
 4. **Fail Safe**: On errors, fall back to standard Git behavior
@@ -447,13 +404,9 @@ No retraining or prompt modifications needed!
 - [ ] Phase 3: Advanced operations (v0.3.0)
 - [ ] Phase 4: Distribution & v1.0 release
 
-## Contributing
-
-Contributions welcome! This project is in early stages. See issues for planned work.
-
 ## License
 
-MIT License - see LICENSE file for details
+MIT License
 
 ---
 
