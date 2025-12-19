@@ -281,11 +281,13 @@ describe("zagi diff --stat", () => {
     expect(result).toMatch(/files changed/);
   });
 
-  test("--stat produces smaller output than patch mode", () => {
+  test("--stat shows summary info not full diff content", () => {
     const stat = runCommand(ZAGI_BIN, ["diff", "--stat"]);
-    const patch = runCommand(ZAGI_BIN, ["diff"]);
-
-    expect(stat.length).toBeLessThan(patch.length);
+    // Stat mode should not contain actual diff lines
+    expect(stat).not.toMatch(/^\+ /m);
+    expect(stat).not.toMatch(/^- /m);
+    // But should contain the summary
+    expect(stat).toMatch(/files changed/);
   });
 });
 

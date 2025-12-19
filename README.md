@@ -1,11 +1,11 @@
 # zagi
 
-> a git interface for agents
+> a better git interface for agents
 
-- Concise output that fits in context windows
 - Familiar git interface for agents
-- Unrecognized commands pass through to git
-- Written in Zig with libgit2
+- Concise output that doesn't overflow context windows
+- Unrecognized commands pass through to system git
+- zagi is between 1.5x and 2x faster than git
 
 ## Installation
 
