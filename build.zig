@@ -58,12 +58,33 @@ pub fn build(b: *std.Build) void {
     });
     git_tests.root_module.linkLibrary(libgit2_dep.artifact("git2"));
 
+    const alias_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cmds/alias.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const add_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cmds/add.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    add_tests.root_module.linkLibrary(libgit2_dep.artifact("git2"));
+
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const run_log_tests = b.addRunArtifact(log_tests);
     const run_git_tests = b.addRunArtifact(git_tests);
+    const run_alias_tests = b.addRunArtifact(alias_tests);
+    const run_add_tests = b.addRunArtifact(add_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
     test_step.dependOn(&run_log_tests.step);
     test_step.dependOn(&run_git_tests.step);
+    test_step.dependOn(&run_alias_tests.step);
+    test_step.dependOn(&run_add_tests.step);
 }

@@ -88,3 +88,65 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{Wri
         }
     }
 }
+
+// Output formatting functions (testable without libgit2)
+
+pub fn formatStagedHeader(writer: anytype, count: usize) !void {
+    if (count == 0) {
+        try writer.print("nothing to add\n", .{});
+    } else {
+        try writer.print("staged: {d} file{s}\n", .{ count, if (count == 1) "" else "s" });
+    }
+}
+
+pub fn formatStagedFile(writer: anytype, marker: []const u8, path: []const u8) !void {
+    try writer.print("  {s} {s}\n", .{ marker, path });
+}
+
+// Tests
+const testing = std.testing;
+
+test "formatStagedHeader with zero files" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatStagedHeader(output.writer(), 0);
+
+    try testing.expectEqualStrings("nothing to add\n", output.items);
+}
+
+test "formatStagedHeader with one file" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatStagedHeader(output.writer(), 1);
+
+    try testing.expectEqualStrings("staged: 1 file\n", output.items);
+}
+
+test "formatStagedHeader with multiple files" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatStagedHeader(output.writer(), 5);
+
+    try testing.expectEqualStrings("staged: 5 files\n", output.items);
+}
+
+test "formatStagedFile formats correctly" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatStagedFile(output.writer(), "A ", "src/main.zig");
+
+    try testing.expectEqualStrings("  A  src/main.zig\n", output.items);
+}
+
+test "formatStagedFile with modified marker" {
+    var output = std.array_list.Managed(u8).init(testing.allocator);
+    defer output.deinit();
+
+    try formatStagedFile(output.writer(), "M ", "README.md");
+
+    try testing.expectEqualStrings("  M  README.md\n", output.items);
+}

@@ -3,6 +3,7 @@ const passthrough = @import("passthrough.zig");
 const log = @import("cmds/log.zig");
 const status = @import("cmds/status.zig");
 const add = @import("cmds/add.zig");
+const alias = @import("cmds/alias.zig");
 const git = @import("cmds/git.zig");
 
 pub fn main() void {
@@ -33,6 +34,8 @@ fn run() !void {
         try status.run(allocator, args);
     } else if (std.mem.eql(u8, cmd, "add")) {
         try add.run(allocator, args);
+    } else if (std.mem.eql(u8, cmd, "alias")) {
+        try alias.run(allocator, args);
     } else {
         try passthrough.run(allocator, args);
     }

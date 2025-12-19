@@ -134,7 +134,7 @@ setup_alias() {
 
     # Append alias
     echo "" >> "$SHELL_CONFIG"
-    echo "# zagi - git for AI agents" >> "$SHELL_CONFIG"
+    echo "# zagi - a better git for agents" >> "$SHELL_CONFIG"
     echo "$ALIAS_CMD" >> "$SHELL_CONFIG"
 
     info "Added: $ALIAS_CMD"
