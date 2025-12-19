@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const git = @import("git.zig");
 
 pub const help =
@@ -16,8 +15,6 @@ const Shell = enum {
     bash,
     zsh,
     fish,
-    powershell,
-    cmd,
     unknown,
 };
 
@@ -49,15 +46,6 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) git.Error!void {
 }
 
 fn detectShell() Shell {
-    if (builtin.os.tag == .windows) {
-        // On Windows, check for PowerShell or default to cmd
-        if (std.posix.getenv("PSModulePath")) |_| {
-            return .powershell;
-        }
-        return .cmd;
-    }
-
-    // Unix-like: check SHELL environment variable
     const shell_path = std.posix.getenv("SHELL") orelse return .unknown;
 
     if (std.mem.endsWith(u8, shell_path, "/bash") or std.mem.eql(u8, shell_path, "bash")) {
@@ -114,22 +102,6 @@ fn printInitInstructions(writer: anytype, shell: Shell) !void {
                 \\
             , .{getZagiPath()});
         },
-        .powershell => {
-            try writer.print(
-                \\# Add to $PROFILE:
-                \\Set-Alias -Name git -Value '{s}'
-                \\
-            , .{getZagiPath()});
-        },
-        .cmd => {
-            try writer.print(
-                \\:: Create a batch file at a location in your PATH:
-                \\:: git.bat
-                \\@echo off
-                \\"{s}" %*
-                \\
-            , .{getZagiPath()});
-        },
         .unknown => {
             try writer.print(
                 \\# Could not detect shell. Common configurations:
@@ -140,10 +112,7 @@ fn printInitInstructions(writer: anytype, shell: Shell) !void {
                 \\# fish:
                 \\alias git '{s}'
                 \\
-                \\# PowerShell:
-                \\Set-Alias -Name git -Value '{s}'
-                \\
-            , .{ getZagiPath(), getZagiPath(), getZagiPath() });
+            , .{ getZagiPath(), getZagiPath() });
         },
     }
 }
@@ -162,13 +131,12 @@ fn addToShellConfig(allocator: std.mem.Allocator, shell: Shell, writer: anytype)
 
     const config_path: ?[]const u8 = switch (shell) {
         .bash => blk: {
-            // Check for .bashrc first, then .bash_profile
             const bashrc = std.fmt.allocPrint(allocator, "{s}/.bashrc", .{home}) catch return error.OutOfMemory;
             break :blk bashrc;
         },
         .zsh => std.fmt.allocPrint(allocator, "{s}/.zshrc", .{home}) catch return error.OutOfMemory,
         .fish => std.fmt.allocPrint(allocator, "{s}/.config/fish/config.fish", .{home}) catch return error.OutOfMemory,
-        .powershell, .cmd, .unknown => null,
+        .unknown => null,
     };
 
     if (config_path == null) {
@@ -298,17 +266,6 @@ test "printInitInstructions for fish" {
     try testing.expect(std.mem.indexOf(u8, result, "alias git 'zagi'") != null);
 }
 
-test "printInitInstructions for powershell" {
-    var output = std.array_list.Managed(u8).init(testing.allocator);
-    defer output.deinit();
-
-    try printInitInstructions(output.writer(), .powershell);
-
-    const result = output.items;
-    try testing.expect(std.mem.indexOf(u8, result, "Set-Alias") != null);
-    try testing.expect(std.mem.indexOf(u8, result, "$PROFILE") != null);
-}
-
 test "printInitInstructions for unknown shell shows all options" {
     var output = std.array_list.Managed(u8).init(testing.allocator);
     defer output.deinit();
@@ -318,7 +275,6 @@ test "printInitInstructions for unknown shell shows all options" {
     const result = output.items;
     try testing.expect(std.mem.indexOf(u8, result, "bash/zsh") != null);
     try testing.expect(std.mem.indexOf(u8, result, "fish") != null);
-    try testing.expect(std.mem.indexOf(u8, result, "PowerShell") != null);
 }
 
 test "getZagiPath returns zagi" {

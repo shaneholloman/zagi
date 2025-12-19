@@ -13,7 +13,6 @@ jobs:
     strategy:
       matrix:
         include:
-          # Native builds (no cross-compilation issues)
           - os: ubuntu-latest
             target: native
             artifact: zagi-linux-x86_64
@@ -29,12 +28,6 @@ jobs:
             artifact: zagi-macos-aarch64
             zig_url: https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz
             zig_dir: zig-aarch64-macos-0.15.2
-          - os: windows-latest
-            target: native
-            artifact: zagi-windows-x86_64
-            zig_url: https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip
-            zig_dir: zig-x86_64-windows-0.15.2
-          # Cross-compile ARM Linux from x86 Linux
           - os: ubuntu-latest
             target: aarch64-linux-gnu
             artifact: zagi-linux-aarch64
@@ -46,18 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Zig (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Install Zig
         run: |
           curl -L ${{ matrix.zig_url }} | tar -xJ
           echo "$PWD/${{ matrix.zig_dir }}" >> $GITHUB_PATH
-
-      - name: Install Zig (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          curl -L -o zig.zip ${{ matrix.zig_url }}
-          unzip zig.zip
-          echo "$PWD/${{ matrix.zig_dir }}" >> $env:GITHUB_PATH
 
       - name: Build (native)
         if: matrix.target == 'native'
@@ -67,25 +52,16 @@ jobs:
         if: matrix.target != 'native'
         run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
 
-      - name: Package (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Package
         run: |
           cd zig-out/bin
           tar -czvf ../../${{ matrix.artifact }}.tar.gz zagi
-
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd zig-out/bin
-          Compress-Archive -Path zagi.exe -DestinationPath ../../${{ matrix.artifact }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.zip
+          path: ${{ matrix.artifact }}.tar.gz
 
   release:
     needs: build
@@ -102,7 +78,5 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
+          files: artifacts/**/*.tar.gz
           generate_release_notes: true

@@ -25,7 +25,6 @@ detect_platform() {
     case "$OS" in
         Linux)  OS="linux" ;;
         Darwin) OS="macos" ;;
-        MINGW*|MSYS*|CYGWIN*) OS="windows" ;;
         *) error "Unsupported OS: $OS" ;;
     esac
 
