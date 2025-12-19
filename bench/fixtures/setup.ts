@@ -5,8 +5,10 @@ import { resolve } from "path";
 const FIXTURES_BASE = resolve(__dirname, "repos");
 const COMMIT_COUNT = 100;
 
-// Each caller gets a unique repo
-let repoCounter = 0;
+// Generate unique IDs for parallel safety
+function uid() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 function gitIn(repoDir: string, ...args: string[]) {
   execFileSync("git", args, { cwd: repoDir, stdio: "pipe" });
@@ -17,7 +19,7 @@ function gitIn(repoDir: string, ...args: string[]) {
  * Each call creates a fresh repo with unique ID.
  */
 export function createFixtureRepo(): string {
-  const repoId = `repo-${repoCounter++}-${Date.now()}`;
+  const repoId = `repo-${uid()}`;
   const repoDir = resolve(FIXTURES_BASE, repoId);
 
   // Ensure base directory exists
@@ -95,9 +97,9 @@ export function createFixtureRepo(): string {
     const message = `${action} ${subject}`;
 
     // Modify a file
-    const fileNum = i % 3;
     const files = ["src/main.ts", "src/utils.ts", "README.md"];
-    const filePath = resolve(repoDir, files[fileNum]);
+    const fileNum = i % files.length;
+    const filePath = resolve(repoDir, files[fileNum]!);
 
     const content =
       existsSync(filePath) && fileNum !== 2
