@@ -168,6 +168,98 @@ describe("git fork --pick", () => {
     expect(result.output).toContain("not found");
     expect(result.exitCode).toBe(128);
   });
+
+  test("preserves local uncommitted changes when fork has no new commits", () => {
+    // Create a fork (no changes made in fork)
+    runCommand(ZAGI_BIN, ["fork", "empty-fork"]);
+
+    // Make local uncommitted changes in base
+    writeFileSync(resolve(REPO_DIR, "local-changes.txt"), "my local work\n");
+    writeFileSync(resolve(REPO_DIR, "file.txt"), "modified locally\n");
+
+    // Pick the fork (which has no commits ahead)
+    const result = runCommand(ZAGI_BIN, ["fork", "--pick", "empty-fork"]);
+
+    expect(result.output).toContain("picked: empty-fork");
+    expect(result.exitCode).toBe(0);
+
+    // Verify local changes are preserved
+    const localFile = execFileSync("cat", ["local-changes.txt"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+    expect(localFile).toBe("my local work\n");
+
+    const modifiedFile = execFileSync("cat", ["file.txt"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+    expect(modifiedFile).toBe("modified locally\n");
+  });
+
+  test("preserves local uncommitted changes when fork has non-conflicting commits", () => {
+    runCommand(ZAGI_BIN, ["fork", "feature"]);
+
+    // Make changes in fork to a DIFFERENT file
+    const forkDir = resolve(REPO_DIR, ".forks/feature");
+    writeFileSync(resolve(forkDir, "new-feature.txt"), "feature content\n");
+    execFileSync("git", ["add", "."], { cwd: forkDir });
+    execFileSync("git", ["commit", "-m", "Add feature"], { cwd: forkDir });
+
+    // Make local uncommitted changes in base to a DIFFERENT file
+    writeFileSync(resolve(REPO_DIR, "local-work.txt"), "my local work\n");
+
+    // Pick the fork
+    const result = runCommand(ZAGI_BIN, ["fork", "--pick", "feature"]);
+
+    expect(result.output).toContain("picked: feature");
+    expect(result.exitCode).toBe(0);
+
+    // Verify fork changes are applied
+    expect(existsSync(resolve(REPO_DIR, "new-feature.txt"))).toBe(true);
+    const featureFile = execFileSync("cat", ["new-feature.txt"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+    expect(featureFile).toBe("feature content\n");
+
+    // Verify local uncommitted changes are preserved
+    const localFile = execFileSync("cat", ["local-work.txt"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+    expect(localFile).toBe("my local work\n");
+  });
+
+  test("fails safely when fork has conflicting changes", () => {
+    runCommand(ZAGI_BIN, ["fork", "conflict"]);
+
+    // Make changes in fork to file.txt
+    const forkDir = resolve(REPO_DIR, ".forks/conflict");
+    writeFileSync(resolve(forkDir, "file.txt"), "fork version\n");
+    execFileSync("git", ["add", "."], { cwd: forkDir });
+    execFileSync("git", ["commit", "-m", "Change file"], { cwd: forkDir });
+
+    // Make local uncommitted changes to the SAME file in base
+    writeFileSync(resolve(REPO_DIR, "file.txt"), "local version\n");
+
+    // Pick should fail due to conflict
+    const result = runCommand(
+      ZAGI_BIN,
+      ["fork", "--pick", "conflict"],
+      undefined,
+      true
+    );
+
+    expect(result.exitCode).not.toBe(0);
+
+    // Verify local changes are still preserved (not overwritten)
+    const content = execFileSync("cat", ["file.txt"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+    expect(content).toBe("local version\n");
+  });
 });
 
 describe("git fork --delete", () => {
