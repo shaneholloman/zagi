@@ -1,0 +1,591 @@
+const std = @import("std");
+const c = @cImport(@cInclude("git2.h"));
+const git = @import("git.zig");
+
+pub const help =
+    \\usage: git fork [<name>] [options]
+    \\
+    \\Manage parallel working copies for experimentation.
+    \\
+    \\Commands:
+    \\  git fork <name>          Create a new fork in .forks/<name>/
+    \\  git fork                 List existing forks
+    \\  git fork --pick <name>   Apply fork's commits to base
+    \\  git fork --delete <name> Delete a specific fork
+    \\  git fork --delete-all    Delete all forks
+    \\
+    \\Forks are ephemeral worktrees for parallel experimentation.
+    \\
+;
+
+pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) git.Error!void {
+    const stdout = std.fs.File.stdout().deprecatedWriter();
+
+    // Parse arguments
+    var fork_name: ?[]const u8 = null;
+    var pick_name: ?[]const u8 = null;
+    var delete_name: ?[]const u8 = null;
+    var delete_all = false;
+
+    var i: usize = 2; // Skip "zagi" and "fork"
+    while (i < args.len) : (i += 1) {
+        const arg = std.mem.sliceTo(args[i], 0);
+
+        if (std.mem.eql(u8, arg, "--pick")) {
+            i += 1;
+            if (i >= args.len) {
+                return git.Error.UsageError;
+            }
+            pick_name = std.mem.sliceTo(args[i], 0);
+        } else if (std.mem.startsWith(u8, arg, "--pick=")) {
+            pick_name = arg[7..];
+        } else if (std.mem.eql(u8, arg, "--delete")) {
+            i += 1;
+            if (i >= args.len) {
+                return git.Error.UsageError;
+            }
+            delete_name = std.mem.sliceTo(args[i], 0);
+        } else if (std.mem.startsWith(u8, arg, "--delete=")) {
+            delete_name = arg[9..];
+        } else if (std.mem.eql(u8, arg, "--delete-all")) {
+            delete_all = true;
+        } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
+            stdout.print("{s}", .{help}) catch {};
+            return;
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            return git.Error.UnsupportedFlag;
+        } else {
+            // Positional argument = fork name
+            fork_name = arg;
+        }
+    }
+
+    // Initialize libgit2
+    if (c.git_libgit2_init() < 0) {
+        return git.Error.InitFailed;
+    }
+    defer _ = c.git_libgit2_shutdown();
+
+    // Open repository
+    var repo: ?*c.git_repository = null;
+    if (c.git_repository_open_ext(&repo, ".", 0, null) < 0) {
+        return git.Error.NotARepository;
+    }
+    defer c.git_repository_free(repo);
+
+    // Check if we're inside a worktree (fork)
+    if (c.git_repository_is_worktree(repo) != 0) {
+        stdout.print("error: already in a fork, run from base\n", .{}) catch {};
+        return git.Error.UsageError;
+    }
+
+    // Dispatch to action
+    if (pick_name) |name| {
+        try pickFork(allocator, repo, name, stdout);
+    } else if (delete_name) |name| {
+        try deleteFork(allocator, repo, name, stdout);
+    } else if (delete_all) {
+        try deleteAllForks(allocator, repo, stdout);
+    } else if (fork_name) |name| {
+        try createFork(allocator, repo, name, stdout);
+    } else {
+        try listForks(allocator, repo, stdout);
+    }
+}
+
+fn createFork(allocator: std.mem.Allocator, repo: ?*c.git_repository, name: []const u8, stdout: anytype) !void {
+    _ = allocator;
+
+    // Get repo root path
+    const workdir = c.git_repository_workdir(repo);
+    if (workdir == null) {
+        return git.Error.NotARepository;
+    }
+    const workdir_slice = std.mem.sliceTo(workdir, 0);
+
+    // Build path: <workdir>/.forks/<name>
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const fork_path = std.fmt.bufPrint(&path_buf, "{s}.forks/{s}", .{ workdir_slice, name }) catch {
+        return git.Error.WriteFailed;
+    };
+
+    // Null-terminate for C
+    var path_z: [std.fs.max_path_bytes]u8 = undefined;
+    @memcpy(path_z[0..fork_path.len], fork_path);
+    path_z[fork_path.len] = 0;
+
+    // Null-terminate name for C
+    var name_z: [256]u8 = undefined;
+    if (name.len >= name_z.len) {
+        return git.Error.UsageError;
+    }
+    @memcpy(name_z[0..name.len], name);
+    name_z[name.len] = 0;
+
+    // Create .forks directory if needed
+    var forks_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const forks_dir = std.fmt.bufPrint(&forks_dir_buf, "{s}.forks", .{workdir_slice}) catch {
+        return git.Error.WriteFailed;
+    };
+
+    const first_fork = std.fs.accessAbsolute(forks_dir, .{}) == error.FileNotFound;
+    std.fs.makeDirAbsolute(forks_dir) catch |err| {
+        if (err != error.PathAlreadyExists) {
+            return git.Error.WriteFailed;
+        }
+    };
+
+    // Add .forks/ to .gitignore on first fork
+    if (first_fork) {
+        var gitignore_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const gitignore_path = std.fmt.bufPrint(&gitignore_buf, "{s}.gitignore", .{workdir_slice}) catch {
+            return git.Error.WriteFailed;
+        };
+
+        // Check if .forks/ is already in .gitignore by reading the whole file
+        var needs_add = true;
+        if (std.fs.openFileAbsolute(gitignore_path, .{})) |file| {
+            defer file.close();
+            var content_buf: [8192]u8 = undefined;
+            const bytes_read = file.readAll(&content_buf) catch 0;
+            const content = content_buf[0..bytes_read];
+
+            // Check each line
+            var iter = std.mem.splitScalar(u8, content, '\n');
+            while (iter.next()) |line| {
+                if (std.mem.eql(u8, line, ".forks/") or std.mem.eql(u8, line, ".forks")) {
+                    needs_add = false;
+                    break;
+                }
+            }
+        } else |_| {}
+
+        if (needs_add) {
+            // Append .forks/ to .gitignore (or create if doesn't exist)
+            const gitignore = std.fs.openFileAbsolute(gitignore_path, .{ .mode = .read_write }) catch |err| {
+                if (err == error.FileNotFound) {
+                    // Create new .gitignore
+                    if (std.fs.createFileAbsolute(gitignore_path, .{})) |file| {
+                        defer file.close();
+                        file.writeAll(".forks/\n") catch {};
+                    } else |_| {}
+                    return createForkWorktree(repo, &name_z, &path_z, name, stdout);
+                }
+                return git.Error.WriteFailed;
+            };
+            defer gitignore.close();
+
+            // Seek to end and check if we need a newline
+            const stat = gitignore.stat() catch return git.Error.WriteFailed;
+            if (stat.size > 0) {
+                gitignore.seekTo(stat.size - 1) catch return git.Error.WriteFailed;
+                var last_byte: [1]u8 = undefined;
+                _ = gitignore.readAll(&last_byte) catch return git.Error.WriteFailed;
+                gitignore.seekTo(stat.size) catch return git.Error.WriteFailed;
+                if (last_byte[0] != '\n') {
+                    gitignore.writeAll("\n") catch return git.Error.WriteFailed;
+                }
+            }
+            gitignore.writeAll(".forks/\n") catch return git.Error.WriteFailed;
+        }
+    }
+
+    return createForkWorktree(repo, &name_z, &path_z, name, stdout);
+}
+
+fn createForkWorktree(repo: ?*c.git_repository, name_z: *[256]u8, path_z: *[std.fs.max_path_bytes]u8, name: []const u8, stdout: anytype) !void {
+    // Initialize worktree add options
+    var opts: c.git_worktree_add_options = .{
+        .version = c.GIT_WORKTREE_ADD_OPTIONS_VERSION,
+        .lock = 0,
+        .checkout_existing = 0,
+        .ref = null,
+        .checkout_options = .{
+            .version = c.GIT_CHECKOUT_OPTIONS_VERSION,
+            .checkout_strategy = c.GIT_CHECKOUT_SAFE,
+            .disable_filters = 0,
+            .dir_mode = 0,
+            .file_mode = 0,
+            .file_open_flags = 0,
+            .notify_flags = 0,
+            .notify_cb = null,
+            .notify_payload = null,
+            .progress_cb = null,
+            .progress_payload = null,
+            .paths = .{ .strings = null, .count = 0 },
+            .baseline = null,
+            .baseline_index = null,
+            .target_directory = null,
+            .ancestor_label = null,
+            .our_label = null,
+            .their_label = null,
+            .perfdata_cb = null,
+            .perfdata_payload = null,
+        },
+    };
+
+    // Create the worktree
+    var worktree: ?*c.git_worktree = null;
+    const result = c.git_worktree_add(&worktree, repo, name_z, path_z, &opts);
+    if (result < 0) {
+        const err = c.git_error_last();
+        if (err != null) {
+            const msg = std.mem.sliceTo(err.*.message, 0);
+            stdout.print("error: {s}\n", .{msg}) catch {};
+        }
+        return git.Error.WriteFailed;
+    }
+    defer c.git_worktree_free(worktree);
+
+    // Success output
+    stdout.print("forked: {s}\n", .{name}) catch return git.Error.WriteFailed;
+    stdout.print("  .forks/{s}/\n", .{name}) catch return git.Error.WriteFailed;
+    stdout.print("\nhint: cd .forks/{s} && <work here>\n", .{name}) catch return git.Error.WriteFailed;
+    stdout.print("      when done: git fork --pick {s}\n", .{name}) catch return git.Error.WriteFailed;
+}
+
+fn listForks(allocator: std.mem.Allocator, repo: ?*c.git_repository, stdout: anytype) !void {
+    var worktree_list: c.git_strarray = .{ .strings = null, .count = 0 };
+    if (c.git_worktree_list(&worktree_list, repo) < 0) {
+        return git.Error.StatusFailed;
+    }
+    defer c.git_strarray_free(&worktree_list);
+
+    if (worktree_list.count == 0) {
+        stdout.print("no forks\n", .{}) catch return git.Error.WriteFailed;
+        return;
+    }
+
+    stdout.print("forks:\n", .{}) catch return git.Error.WriteFailed;
+
+    for (0..worktree_list.count) |idx| {
+        const name_ptr = worktree_list.strings[idx];
+        const name = std.mem.sliceTo(name_ptr, 0);
+
+        // Get commit count ahead of main
+        const ahead = getCommitsAhead(allocator, repo, name) catch 0;
+
+        if (ahead > 0) {
+            stdout.print("  {s}  ({d} commit{s} ahead)\n", .{
+                name,
+                ahead,
+                if (ahead == 1) "" else "s",
+            }) catch return git.Error.WriteFailed;
+        } else {
+            stdout.print("  {s}\n", .{name}) catch return git.Error.WriteFailed;
+        }
+    }
+}
+
+fn getCommitsAhead(allocator: std.mem.Allocator, repo: ?*c.git_repository, fork_name: []const u8) !usize {
+    _ = allocator;
+
+    // Get HEAD commit of main
+    var main_ref: ?*c.git_reference = null;
+    if (c.git_repository_head(&main_ref, repo) < 0) {
+        return 0;
+    }
+    defer c.git_reference_free(main_ref);
+
+    const main_oid = c.git_reference_target(main_ref);
+    if (main_oid == null) return 0;
+
+    // Get the fork's branch ref
+    var branch_name_buf: [512]u8 = undefined;
+    const branch_name = std.fmt.bufPrint(&branch_name_buf, "refs/heads/{s}", .{fork_name}) catch return 0;
+
+    var branch_name_z: [512]u8 = undefined;
+    @memcpy(branch_name_z[0..branch_name.len], branch_name);
+    branch_name_z[branch_name.len] = 0;
+
+    var fork_ref: ?*c.git_reference = null;
+    if (c.git_reference_lookup(&fork_ref, repo, &branch_name_z) < 0) {
+        return 0;
+    }
+    defer c.git_reference_free(fork_ref);
+
+    const fork_oid = c.git_reference_target(fork_ref);
+    if (fork_oid == null) return 0;
+
+    // Count commits ahead
+    var ahead: usize = 0;
+    var behind: usize = 0;
+    if (c.git_graph_ahead_behind(&ahead, &behind, repo, fork_oid, main_oid) < 0) {
+        return 0;
+    }
+
+    return ahead;
+}
+
+fn pickFork(allocator: std.mem.Allocator, repo: ?*c.git_repository, name: []const u8, stdout: anytype) !void {
+    // Get commits ahead count first
+    const ahead = getCommitsAhead(allocator, repo, name) catch 0;
+
+    // Get the fork's branch ref
+    var branch_name_buf: [512]u8 = undefined;
+    const branch_name = std.fmt.bufPrint(&branch_name_buf, "refs/heads/{s}", .{name}) catch return git.Error.WriteFailed;
+
+    var branch_name_z: [512]u8 = undefined;
+    @memcpy(branch_name_z[0..branch_name.len], branch_name);
+    branch_name_z[branch_name.len] = 0;
+
+    var fork_ref: ?*c.git_reference = null;
+    if (c.git_reference_lookup(&fork_ref, repo, &branch_name_z) < 0) {
+        stdout.print("error: fork '{s}' not found\n", .{name}) catch {};
+        return git.Error.FileNotFound;
+    }
+    defer c.git_reference_free(fork_ref);
+
+    const fork_oid = c.git_reference_target(fork_ref);
+    if (fork_oid == null) {
+        return git.Error.RevwalkFailed;
+    }
+
+    // Get the fork's tree for checkout
+    var fork_commit: ?*c.git_commit = null;
+    if (c.git_commit_lookup(&fork_commit, repo, fork_oid) < 0) {
+        return git.Error.RevwalkFailed;
+    }
+    defer c.git_commit_free(fork_commit);
+
+    var fork_tree: ?*c.git_tree = null;
+    if (c.git_commit_tree(&fork_tree, fork_commit) < 0) {
+        return git.Error.RevwalkFailed;
+    }
+    defer c.git_tree_free(fork_tree);
+
+    // Try checkout FIRST before updating HEAD
+    // This way if there are conflicts, we fail before moving HEAD
+    var checkout_opts: c.git_checkout_options = .{
+        .version = c.GIT_CHECKOUT_OPTIONS_VERSION,
+        .checkout_strategy = c.GIT_CHECKOUT_SAFE,
+        .disable_filters = 0,
+        .dir_mode = 0,
+        .file_mode = 0,
+        .file_open_flags = 0,
+        .notify_flags = 0,
+        .notify_cb = null,
+        .notify_payload = null,
+        .progress_cb = null,
+        .progress_payload = null,
+        .paths = .{ .strings = null, .count = 0 },
+        .baseline = null,
+        .baseline_index = null,
+        .target_directory = null,
+        .ancestor_label = null,
+        .our_label = null,
+        .their_label = null,
+        .perfdata_cb = null,
+        .perfdata_payload = null,
+    };
+
+    // Checkout the fork's tree (not HEAD yet - HEAD still points to old commit)
+    if (c.git_checkout_tree(repo, @ptrCast(fork_tree), &checkout_opts) < 0) {
+        const err = c.git_error_last();
+        if (err != null) {
+            const msg = std.mem.sliceTo(err.*.message, 0);
+            stdout.print("error: {s}\n", .{msg}) catch {};
+            stdout.print("hint: commit or stash changes first\n", .{}) catch {};
+        }
+        return git.Error.WriteFailed;
+    }
+
+    // Checkout succeeded, now update HEAD
+    var head_ref: ?*c.git_reference = null;
+    if (c.git_repository_head(&head_ref, repo) < 0) {
+        return git.Error.RevwalkFailed;
+    }
+    defer c.git_reference_free(head_ref);
+
+    const ref_name = c.git_reference_name(head_ref);
+    if (ref_name == null) {
+        return git.Error.RevwalkFailed;
+    }
+
+    var new_ref: ?*c.git_reference = null;
+    if (c.git_reference_create(&new_ref, repo, ref_name, fork_oid, 1, "fork --pick") < 0) {
+        const err = c.git_error_last();
+        if (err != null) {
+            const msg = std.mem.sliceTo(err.*.message, 0);
+            stdout.print("error: {s}\n", .{msg}) catch {};
+        }
+        return git.Error.WriteFailed;
+    }
+    if (new_ref != null) c.git_reference_free(new_ref);
+
+    stdout.print("picked: {s}\n", .{name}) catch return git.Error.WriteFailed;
+    if (ahead > 0) {
+        stdout.print("  {d} commit{s} applied to base\n", .{
+            ahead,
+            if (ahead == 1) "" else "s",
+        }) catch return git.Error.WriteFailed;
+    }
+    stdout.print("\nhint: run `git fork --delete-all` to clean up forks\n", .{}) catch return git.Error.WriteFailed;
+}
+
+fn deleteFork(allocator: std.mem.Allocator, repo: ?*c.git_repository, name: []const u8, stdout: anytype) !void {
+    _ = allocator;
+
+    // Null-terminate name
+    var name_z: [256]u8 = undefined;
+    if (name.len >= name_z.len) {
+        return git.Error.UsageError;
+    }
+    @memcpy(name_z[0..name.len], name);
+    name_z[name.len] = 0;
+
+    // Lookup the worktree
+    var worktree: ?*c.git_worktree = null;
+    if (c.git_worktree_lookup(&worktree, repo, &name_z) < 0) {
+        stdout.print("error: fork '{s}' not found\n", .{name}) catch {};
+        return git.Error.FileNotFound;
+    }
+    defer c.git_worktree_free(worktree);
+
+    // Get the path before pruning
+    const wt_path = c.git_worktree_path(worktree);
+    var path_copy: [std.fs.max_path_bytes]u8 = undefined;
+    var path_len: usize = 0;
+    if (wt_path != null) {
+        const wt_path_slice = std.mem.sliceTo(wt_path, 0);
+        path_len = wt_path_slice.len;
+        @memcpy(path_copy[0..path_len], wt_path_slice);
+    }
+
+    // Prune the worktree (removes git data structures)
+    var prune_opts: c.git_worktree_prune_options = .{
+        .version = c.GIT_WORKTREE_PRUNE_OPTIONS_VERSION,
+        .flags = c.GIT_WORKTREE_PRUNE_VALID | c.GIT_WORKTREE_PRUNE_WORKING_TREE,
+    };
+
+    if (c.git_worktree_prune(worktree, &prune_opts) < 0) {
+        const err = c.git_error_last();
+        if (err != null) {
+            const msg = std.mem.sliceTo(err.*.message, 0);
+            stdout.print("error: {s}\n", .{msg}) catch {};
+        }
+        return git.Error.WriteFailed;
+    }
+
+    // Delete the working directory
+    if (path_len > 0) {
+        std.fs.deleteTreeAbsolute(path_copy[0..path_len]) catch {};
+    }
+
+    // Delete the branch
+    var branch_name_buf: [512]u8 = undefined;
+    const branch_name = std.fmt.bufPrint(&branch_name_buf, "refs/heads/{s}", .{name}) catch return git.Error.WriteFailed;
+
+    var branch_name_z: [512]u8 = undefined;
+    @memcpy(branch_name_z[0..branch_name.len], branch_name);
+    branch_name_z[branch_name.len] = 0;
+
+    var branch_ref: ?*c.git_reference = null;
+    if (c.git_reference_lookup(&branch_ref, repo, &branch_name_z) == 0) {
+        _ = c.git_reference_delete(branch_ref);
+        c.git_reference_free(branch_ref);
+    }
+
+    stdout.print("deleted: {s}\n", .{name}) catch return git.Error.WriteFailed;
+}
+
+fn deleteAllForks(allocator: std.mem.Allocator, repo: ?*c.git_repository, stdout: anytype) !void {
+    var worktree_list: c.git_strarray = .{ .strings = null, .count = 0 };
+    if (c.git_worktree_list(&worktree_list, repo) < 0) {
+        return git.Error.StatusFailed;
+    }
+    defer c.git_strarray_free(&worktree_list);
+
+    if (worktree_list.count == 0) {
+        stdout.print("no forks to delete\n", .{}) catch return git.Error.WriteFailed;
+        return;
+    }
+
+    // Collect names first (since we're modifying the list)
+    var deleted_names = std.array_list.Managed([]const u8).init(allocator);
+    defer deleted_names.deinit();
+
+    for (0..worktree_list.count) |idx| {
+        const name_ptr = worktree_list.strings[idx];
+        const name = std.mem.sliceTo(name_ptr, 0);
+
+        // Copy name for output
+        const name_copy = allocator.dupe(u8, name) catch continue;
+        deleted_names.append(name_copy) catch continue;
+
+        // Delete the fork (silently)
+        deleteForkSilent(repo, name);
+    }
+    defer {
+        for (deleted_names.items) |n| {
+            allocator.free(n);
+        }
+    }
+
+    stdout.print("deleted: ", .{}) catch return git.Error.WriteFailed;
+    for (deleted_names.items, 0..) |name, idx| {
+        if (idx > 0) {
+            stdout.print(", ", .{}) catch {};
+        }
+        stdout.print("{s}", .{name}) catch {};
+    }
+    stdout.print("\n", .{}) catch return git.Error.WriteFailed;
+
+    // Try to remove .forks directory if empty
+    const workdir = c.git_repository_workdir(repo);
+    if (workdir != null) {
+        const workdir_slice = std.mem.sliceTo(workdir, 0);
+        var forks_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const forks_dir = std.fmt.bufPrint(&forks_dir_buf, "{s}.forks", .{workdir_slice}) catch return;
+        std.fs.deleteDirAbsolute(forks_dir) catch {};
+    }
+}
+
+fn deleteForkSilent(repo: ?*c.git_repository, name: []const u8) void {
+    // Null-terminate name
+    var name_z: [256]u8 = undefined;
+    if (name.len >= name_z.len) return;
+    @memcpy(name_z[0..name.len], name);
+    name_z[name.len] = 0;
+
+    // Lookup the worktree
+    var worktree: ?*c.git_worktree = null;
+    if (c.git_worktree_lookup(&worktree, repo, &name_z) < 0) return;
+    defer c.git_worktree_free(worktree);
+
+    // Get path before pruning
+    const wt_path = c.git_worktree_path(worktree);
+    var path_copy: [std.fs.max_path_bytes]u8 = undefined;
+    var path_len: usize = 0;
+    if (wt_path != null) {
+        const wt_path_slice = std.mem.sliceTo(wt_path, 0);
+        path_len = wt_path_slice.len;
+        @memcpy(path_copy[0..path_len], wt_path_slice);
+    }
+
+    // Prune
+    var prune_opts: c.git_worktree_prune_options = .{
+        .version = c.GIT_WORKTREE_PRUNE_OPTIONS_VERSION,
+        .flags = c.GIT_WORKTREE_PRUNE_VALID | c.GIT_WORKTREE_PRUNE_WORKING_TREE,
+    };
+    _ = c.git_worktree_prune(worktree, &prune_opts);
+
+    // Delete directory
+    if (path_len > 0) {
+        std.fs.deleteTreeAbsolute(path_copy[0..path_len]) catch {};
+    }
+
+    // Delete branch
+    var branch_name_buf: [512]u8 = undefined;
+    const branch_name = std.fmt.bufPrint(&branch_name_buf, "refs/heads/{s}", .{name}) catch return;
+
+    var branch_name_z: [512]u8 = undefined;
+    @memcpy(branch_name_z[0..branch_name.len], branch_name);
+    branch_name_z[branch_name.len] = 0;
+
+    var branch_ref: ?*c.git_reference = null;
+    if (c.git_reference_lookup(&branch_ref, repo, &branch_name_z) == 0) {
+        _ = c.git_reference_delete(branch_ref);
+        c.git_reference_free(branch_ref);
+    }
+}
