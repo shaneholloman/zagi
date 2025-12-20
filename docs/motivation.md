@@ -40,3 +40,25 @@ zagi wraps git with agent-optimized output:
 4. No config files - works out of the box
 5. No state - stateless operations that can be retried
 6. Every command is the begining and the end, there is no interactivity
+
+## Agent mode
+
+Beyond output efficiency, agents need safety and traceability.
+
+### Guardrails
+
+Agents make mistakes. A `git reset --hard` or `git clean -fd` can destroy hours of work. When `ZAGI_AGENT` is set, zagi blocks commands that cause unrecoverable data loss.
+
+### Prompt tracking
+
+Every commit can record the user prompt that created it (`--prompt`). This creates an audit trail - when reviewing agent work, you can see exactly what was asked.
+
+```bash
+git log --prompts
+```
+
+### Longer term mission
+
+As apps become infinitely customizable per user, each agent needs version control. Not a full repo - that probably wouldn't scale - but branches they can switch between, commits they can step through, history they can revert.
+
+The agent does the work. Humans review. Git is the interface between them.
