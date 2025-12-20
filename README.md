@@ -13,7 +13,7 @@
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mattzcarey/zagi/main/install.sh | sh
+curl -fsSL zagi.sh/install | sh
 ```
 
 This downloads the binary and sets up `git` as an alias to `zagi`. Restart your shell after installation.
@@ -57,10 +57,10 @@ cd .forks/nodejs-based
 cd .forks/bun-based
 # ... make changes, commit ...
 
-# Compare results, then pick the winner
+# Compare results, then promote the winner
 cd ../..
-git fork                    # list forks with commit counts
-git fork --pick bun-based   # apply to base
+git fork                       # list forks with commit counts
+git fork --promote bun-based   # hard checkout to base
 
 # Clean up
 git fork --delete-all

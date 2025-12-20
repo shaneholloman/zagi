@@ -2,7 +2,7 @@
 set -e
 
 # zagi installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/mattzcarey/zagi/main/install.sh | sh
+# Usage: curl -fsSL zagi.sh/install | sh
 
 REPO="mattzcarey/zagi"
 INSTALL_DIR="${ZAGI_INSTALL_DIR:-$HOME/.local/bin}"
