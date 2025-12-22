@@ -128,6 +128,6 @@ export function createFixtureRepo(): string {
  */
 export function cleanupFixtures() {
   if (existsSync(FIXTURES_BASE)) {
-    rmSync(FIXTURES_BASE, { recursive: true });
+    rmSync(FIXTURES_BASE, { recursive: true, force: true, maxRetries: 3 });
   }
 }
