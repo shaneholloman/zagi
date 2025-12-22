@@ -69,11 +69,13 @@ git fork --delete-all
 
 ### Agent mode
 
-Set `ZAGI_AGENT` to enable agent-specific features:
+Set `ZAGI_AGENT` to enable agent-specific features.
 
 ```bash
 export ZAGI_AGENT=claude-code
 ```
+
+The value can be any string describing your agent (e.g. `claude-code`, `cursor`, `opencode`) - this will be used in future features for agent-specific behavior.
 
 This enables:
 - **Prompt tracking**: `git commit` requires `--prompt` to record the user request that created the commit
@@ -82,6 +84,14 @@ This enables:
 ```bash
 git commit -m "Add feature" --prompt "Add a logout button to the header.."
 git log --prompts  # view prompts
+```
+
+To prevent child processes from overriding `ZAGI_AGENT`, make it readonly:
+
+```bash
+# bash/zsh
+export ZAGI_AGENT=claude-code
+readonly ZAGI_AGENT
 ```
 
 ### Strip co-authors

@@ -119,11 +119,25 @@ git commit -m "Add feature" --prompt "Add a logout button to the header"
 git log --prompts  # view prompts in log output
 ```
 
-Set `ZAGI_AGENT` to enforce prompt tracking:
+### ZAGI_AGENT
+
+Set `ZAGI_AGENT` to enable agent-specific features. The value can be any string describing your agent (e.g. `claude-code`, `cursor`, `aider`) - this will be used in future features for agent-specific behavior.
 
 ```bash
 export ZAGI_AGENT=claude-code
 git commit -m "x"  # error: --prompt required
+```
+
+When `ZAGI_AGENT` is set:
+- `git commit` requires `--prompt` to record the user request
+- Destructive commands are blocked (guardrails)
+
+To prevent child processes from overriding `ZAGI_AGENT`, make it readonly:
+
+```bash
+# bash/zsh
+export ZAGI_AGENT=claude-code
+readonly ZAGI_AGENT
 ```
 
 ### ZAGI_STRIP_COAUTHORS
