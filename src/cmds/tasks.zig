@@ -473,12 +473,49 @@ fn runAdd(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository
 }
 
 fn runList(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
-    _ = allocator;
-    _ = args;
-    _ = repo;
-
+    _ = args; // No additional args needed for list
     const stdout = std.fs.File.stdout().deprecatedWriter();
-    stdout.print("tasks list: not implemented yet\n", .{}) catch {};
+
+    // Load task list from git ref
+    var task_list = loadTaskList(repo, allocator) catch |err| {
+        stdout.print("error: failed to load tasks: {}\n", .{err}) catch {};
+        return err;
+    };
+    defer task_list.deinit(allocator);
+
+    // If no tasks, show empty state
+    if (task_list.tasks.items.len == 0) {
+        stdout.print("no tasks found\n", .{}) catch {};
+        return;
+    }
+
+    // Display task count summary
+    var pending_count: usize = 0;
+    var completed_count: usize = 0;
+    for (task_list.tasks.items) |task| {
+        if (std.mem.eql(u8, task.status, "completed")) {
+            completed_count += 1;
+        } else {
+            pending_count += 1;
+        }
+    }
+
+    stdout.print("tasks: {} total ({} pending, {} completed)\n\n",
+        .{ task_list.tasks.items.len, pending_count, completed_count }) catch {};
+
+    // List all tasks with compact format
+    for (task_list.tasks.items) |task| {
+        const status_mark = if (std.mem.eql(u8, task.status, "completed")) "✓" else " ";
+
+        // Show dependency if present
+        if (task.after) |after_id| {
+            stdout.print("[{s}] {s} (after {s})\n  {s}\n",
+                .{ status_mark, task.id, after_id, task.content }) catch {};
+        } else {
+            stdout.print("[{s}] {s}\n  {s}\n",
+                .{ status_mark, task.id, task.content }) catch {};
+        }
+    }
 }
 
 fn runShow(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
