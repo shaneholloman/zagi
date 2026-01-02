@@ -12,6 +12,8 @@ pub const help =
     \\  add <content>           Add a new task
     \\  list                    List all tasks
     \\  show <id>               Show task details
+    \\  edit <id> <content>     Edit task content
+    \\  delete <id>             Delete a task
     \\  done <id>               Mark task as complete
     \\  ready                   List tasks ready to work on (no blockers)
     \\  pr                      Export tasks as markdown for PR description
@@ -26,6 +28,8 @@ pub const help =
     \\  git tasks add "Add tests" --after task-001
     \\  git tasks list
     \\  git tasks show task-001
+    \\  git tasks edit task-001 "Fix authentication and authorization bug"
+    \\  git tasks delete task-001
     \\  git tasks done task-001
     \\  git tasks ready
     \\  git tasks pr
@@ -383,6 +387,10 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
         try runList(allocator, args, repo);
     } else if (std.mem.eql(u8, subcommand, "show")) {
         try runShow(allocator, args, repo);
+    } else if (std.mem.eql(u8, subcommand, "edit")) {
+        try runEdit(allocator, args, repo);
+    } else if (std.mem.eql(u8, subcommand, "delete")) {
+        try runDelete(allocator, args, repo);
     } else if (std.mem.eql(u8, subcommand, "done")) {
         try runDone(allocator, args, repo);
     } else if (std.mem.eql(u8, subcommand, "ready")) {
@@ -944,6 +952,199 @@ fn runPr(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository)
             }
             stdout.print("\n", .{}) catch {};
         }
+    }
+}
+
+fn runEdit(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
+    const stdout = std.fs.File.stdout().deprecatedWriter();
+
+    // Check if we should block this operation in agent mode
+    const guardrails = @import("../guardrails.zig");
+    if (guardrails.isAgentMode()) {
+        stdout.print("error: edit command blocked (ZAGI_AGENT is set)\n", .{}) catch {};
+        stdout.print("reason: modifying tasks could cause data loss\n", .{}) catch {};
+        return Error.InvalidCommand;
+    }
+
+    // Need at least: tasks edit <id> <content>
+    if (args.len < 5) {
+        stdout.print("error: missing task ID or content\n\nusage: git tasks edit <id> <content>\n", .{}) catch {};
+        return Error.InvalidTaskId;
+    }
+
+    const task_id = std.mem.sliceTo(args[3], 0);
+
+    // Parse content arguments (everything from args[4] onwards)
+    var content_parts = std.ArrayList([]const u8){};
+    defer content_parts.deinit(allocator);
+
+    for (args[4..]) |arg| {
+        const arg_str = std.mem.sliceTo(arg, 0);
+        if (!std.mem.eql(u8, arg_str, "--json")) { // Skip --json flag for content
+            content_parts.append(allocator, arg_str) catch return Error.AllocationError;
+        }
+    }
+
+    if (content_parts.items.len == 0) {
+        stdout.print("error: task content cannot be empty\n", .{}) catch {};
+        return Error.MissingTaskContent;
+    }
+
+    // Join content parts with spaces
+    var content_buffer = std.ArrayList(u8){};
+    defer content_buffer.deinit(allocator);
+
+    for (content_parts.items, 0..) |part, i| {
+        if (i > 0) {
+            content_buffer.append(allocator, ' ') catch return Error.AllocationError;
+        }
+        content_buffer.appendSlice(allocator, part) catch return Error.AllocationError;
+    }
+
+    const new_content = content_buffer.toOwnedSlice(allocator) catch return Error.AllocationError;
+    defer allocator.free(new_content);
+
+    // Check for --json flag
+    var use_json = false;
+    for (args[3..]) |arg| {
+        const a = std.mem.sliceTo(arg, 0);
+        if (std.mem.eql(u8, a, "--json")) {
+            use_json = true;
+            break;
+        }
+    }
+
+    // Load task list
+    var task_list = loadTaskList(repo, allocator) catch |err| {
+        stdout.print("error: failed to load tasks: {}\n", .{err}) catch {};
+        return err;
+    };
+    defer task_list.deinit(allocator);
+
+    // Find the task by ID
+    var found_task: ?*Task = null;
+    for (task_list.tasks.items) |*task| {
+        if (std.mem.eql(u8, task.id, task_id)) {
+            found_task = task;
+            break;
+        }
+    }
+
+    if (found_task == null) {
+        stdout.print("error: task '{s}' not found\n", .{task_id}) catch {};
+        return Error.TaskNotFound;
+    }
+
+    const task = found_task.?;
+
+    // Update task content
+    allocator.free(task.content); // Free old content
+    task.content = allocator.dupe(u8, new_content) catch return Error.AllocationError;
+
+    // Save updated task list
+    saveTaskList(repo, task_list, allocator) catch |err| {
+        stdout.print("error: failed to save tasks: {}\n", .{err}) catch {};
+        return err;
+    };
+
+    // Output confirmation
+    if (use_json) {
+        // JSON output
+        const completed_str = if (task.completed) |comp| try std.fmt.allocPrint(allocator, "{}", .{comp}) else allocator.dupe(u8, "null") catch return Error.AllocationError;
+        defer allocator.free(completed_str);
+
+        const after_str = if (task.after) |a| try std.fmt.allocPrint(allocator, "\"{s}\"", .{a}) else allocator.dupe(u8, "null") catch return Error.AllocationError;
+        defer allocator.free(after_str);
+
+        const json_output = try std.fmt.allocPrint(allocator,
+            "{{\"id\":\"{s}\",\"content\":\"{s}\",\"status\":\"{s}\",\"created\":{},\"completed\":{s},\"after\":{s}}}",
+            .{ task.id, task.content, task.status, task.created, completed_str, after_str }
+        );
+        defer allocator.free(json_output);
+
+        stdout.print("{s}\n", .{json_output}) catch {};
+    } else {
+        stdout.print("updated: {s}\n  {s}\n", .{ task_id, new_content }) catch {};
+    }
+}
+
+fn runDelete(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
+    const stdout = std.fs.File.stdout().deprecatedWriter();
+
+    // Check if we should block this operation in agent mode
+    const guardrails = @import("../guardrails.zig");
+    if (guardrails.isAgentMode()) {
+        stdout.print("error: delete command blocked (ZAGI_AGENT is set)\n", .{}) catch {};
+        stdout.print("reason: deleting tasks causes permanent data loss\n", .{}) catch {};
+        return Error.InvalidCommand;
+    }
+
+    // Need at least: tasks delete <id>
+    if (args.len < 4) {
+        stdout.print("error: missing task ID\n\nusage: git tasks delete <id>\n", .{}) catch {};
+        return Error.InvalidTaskId;
+    }
+
+    const task_id = std.mem.sliceTo(args[3], 0);
+
+    // Check for --json flag
+    var use_json = false;
+    for (args[3..]) |arg| {
+        const a = std.mem.sliceTo(arg, 0);
+        if (std.mem.eql(u8, a, "--json")) {
+            use_json = true;
+            break;
+        }
+    }
+
+    // Load task list
+    var task_list = loadTaskList(repo, allocator) catch |err| {
+        stdout.print("error: failed to load tasks: {}\n", .{err}) catch {};
+        return err;
+    };
+    defer task_list.deinit(allocator);
+
+    // Find the task by ID and get its content for confirmation
+    var found_index: ?usize = null;
+    var task_content: []const u8 = "";
+    for (task_list.tasks.items, 0..) |task, i| {
+        if (std.mem.eql(u8, task.id, task_id)) {
+            found_index = i;
+            task_content = task.content;
+            break;
+        }
+    }
+
+    if (found_index == null) {
+        stdout.print("error: task '{s}' not found\n", .{task_id}) catch {};
+        return Error.TaskNotFound;
+    }
+
+    // Check if any other tasks depend on this one
+    for (task_list.tasks.items) |task| {
+        if (task.after) |dependency_id| {
+            if (std.mem.eql(u8, dependency_id, task_id)) {
+                stdout.print("error: task '{s}' cannot be deleted (task '{s}' depends on it)\n", .{ task_id, task.id }) catch {};
+                return Error.InvalidCommand;
+            }
+        }
+    }
+
+    // Remove the task
+    var removed_task = task_list.tasks.swapRemove(found_index.?);
+    removed_task.deinit(allocator);
+
+    // Save updated task list
+    saveTaskList(repo, task_list, allocator) catch |err| {
+        stdout.print("error: failed to save tasks: {}\n", .{err}) catch {};
+        return err;
+    };
+
+    // Output confirmation
+    if (use_json) {
+        stdout.print("{{\"deleted\":\"{s}\"}}\n", .{task_id}) catch {};
+    } else {
+        stdout.print("deleted: {s}\n  {s}\n", .{ task_id, task_content }) catch {};
     }
 }
 
