@@ -518,13 +518,84 @@ fn runList(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repositor
     }
 }
 
-fn runShow(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
-    _ = allocator;
-    _ = args;
-    _ = repo;
+/// Format Unix timestamp to human-readable date string
+fn formatTimestamp(timestamp: i64, allocator: std.mem.Allocator) Error![]u8 {
+    // For now, show relative time (seconds ago, minutes ago, etc.)
+    const now = std.time.timestamp();
+    const diff = now - timestamp;
 
+    if (diff < 60) {
+        return std.fmt.allocPrint(allocator, "{} seconds ago", .{diff}) catch return Error.AllocationError;
+    } else if (diff < 3600) {
+        const minutes = @divTrunc(diff, 60);
+        return std.fmt.allocPrint(allocator, "{} minutes ago", .{minutes}) catch return Error.AllocationError;
+    } else if (diff < 86400) {
+        const hours = @divTrunc(diff, 3600);
+        return std.fmt.allocPrint(allocator, "{} hours ago", .{hours}) catch return Error.AllocationError;
+    } else {
+        const days = @divTrunc(diff, 86400);
+        return std.fmt.allocPrint(allocator, "{} days ago", .{days}) catch return Error.AllocationError;
+    }
+}
+
+fn runShow(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
     const stdout = std.fs.File.stdout().deprecatedWriter();
-    stdout.print("tasks show: not implemented yet\n", .{}) catch {};
+
+    // Need at least: tasks show <id>
+    if (args.len < 4) {
+        stdout.print("error: missing task ID\n\nusage: git tasks show <id>\n", .{}) catch {};
+        return Error.InvalidTaskId;
+    }
+
+    const task_id = std.mem.sliceTo(args[3], 0);
+
+    // Load task list
+    var task_list = loadTaskList(repo, allocator) catch |err| {
+        stdout.print("error: failed to load tasks: {}\n", .{err}) catch {};
+        return err;
+    };
+    defer task_list.deinit(allocator);
+
+    // Find the task by ID
+    var found_task: ?Task = null;
+    for (task_list.tasks.items) |task| {
+        if (std.mem.eql(u8, task.id, task_id)) {
+            found_task = task;
+            break;
+        }
+    }
+
+    if (found_task == null) {
+        stdout.print("error: task '{s}' not found\n", .{task_id}) catch {};
+        return Error.TaskNotFound;
+    }
+
+    const task = found_task.?;
+
+    // Format created timestamp
+    const created_time = formatTimestamp(task.created, allocator) catch return Error.AllocationError;
+    defer allocator.free(created_time);
+
+    // Format completed timestamp if present
+    var completed_time: ?[]u8 = null;
+    if (task.completed) |comp| {
+        completed_time = formatTimestamp(comp, allocator) catch return Error.AllocationError;
+    }
+    defer if (completed_time) |ct| allocator.free(ct);
+
+    // Display task details
+    stdout.print("task: {s}\n", .{task.id}) catch {};
+    stdout.print("content: {s}\n", .{task.content}) catch {};
+    stdout.print("status: {s}\n", .{task.status}) catch {};
+    stdout.print("created: {s}\n", .{created_time}) catch {};
+
+    if (completed_time) |ct| {
+        stdout.print("completed: {s}\n", .{ct}) catch {};
+    }
+
+    if (task.after) |after_id| {
+        stdout.print("depends on: {s}\n", .{after_id}) catch {};
+    }
 }
 
 fn runDone(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repository) Error!void {
