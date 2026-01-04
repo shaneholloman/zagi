@@ -171,15 +171,39 @@ const TaskList = struct {
                     .created = 0,
                 };
 
-                if (parts.next()) |id| {
-                    task.id = allocator.dupe(u8, id) catch return Error.AllocationError;
-                }
-                if (parts.next()) |content| {
-                    task.content = allocator.dupe(u8, content) catch return Error.AllocationError;
-                }
+                const id = parts.next() orelse continue; // Skip malformed lines without ID
+                if (id.len == 0) continue; // Skip tasks with empty IDs
+
+                const content = parts.next() orelse continue; // Skip malformed lines without content
+
+                task.id = allocator.dupe(u8, id) catch return Error.AllocationError;
+                task.content = allocator.dupe(u8, content) catch {
+                    allocator.free(task.id);
+                    return Error.AllocationError;
+                };
+
                 if (parts.next()) |status| {
-                    task.status = allocator.dupe(u8, status) catch return Error.AllocationError;
+                    if (status.len > 0) {
+                        task.status = allocator.dupe(u8, status) catch {
+                            allocator.free(task.id);
+                            allocator.free(task.content);
+                            return Error.AllocationError;
+                        };
+                    } else {
+                        task.status = allocator.dupe(u8, "pending") catch {
+                            allocator.free(task.id);
+                            allocator.free(task.content);
+                            return Error.AllocationError;
+                        };
+                    }
+                } else {
+                    task.status = allocator.dupe(u8, "pending") catch {
+                        allocator.free(task.id);
+                        allocator.free(task.content);
+                        return Error.AllocationError;
+                    };
                 }
+
                 if (parts.next()) |created| {
                     task.created = std.fmt.parseInt(i64, created, 10) catch 0;
                 }
@@ -194,7 +218,12 @@ const TaskList = struct {
                     }
                 }
 
-                task_list.tasks.append(allocator, task) catch return Error.AllocationError;
+                task_list.tasks.append(allocator, task) catch {
+                    allocator.free(task.id);
+                    allocator.free(task.content);
+                    allocator.free(task.status);
+                    return Error.AllocationError;
+                };
             }
         }
 
@@ -1197,4 +1226,106 @@ test "buildTaskRefName - long branch name fails" {
 
     const result = buildTaskRefName(&long_name, allocator);
     try testing.expectError(Error.BranchNameTooLong, result);
+}
+
+test "TaskList.fromJson - handles malformed data gracefully" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Test empty string
+    {
+        var task_list = try TaskList.fromJson(allocator, "");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(usize, 0), task_list.tasks.items.len);
+        try testing.expectEqual(@as(u32, 1), task_list.next_id);
+    }
+
+    // Test garbage data - should skip invalid lines
+    {
+        var task_list = try TaskList.fromJson(allocator, "random garbage\nmore junk\n");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(usize, 0), task_list.tasks.items.len);
+    }
+
+    // Test malformed task line with empty ID - should skip
+    {
+        var task_list = try TaskList.fromJson(allocator, "task:||pending|0|");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(usize, 0), task_list.tasks.items.len);
+    }
+
+    // Test malformed task line missing fields - should skip
+    {
+        var task_list = try TaskList.fromJson(allocator, "task:");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(usize, 0), task_list.tasks.items.len);
+    }
+
+    // Test valid data mixed with invalid
+    {
+        var task_list = try TaskList.fromJson(allocator, "next_id:5\ngarbage\ntask:task-001|Valid task|pending|1234567890|\ntask:||bad|0|\n");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(u32, 5), task_list.next_id);
+        try testing.expectEqual(@as(usize, 1), task_list.tasks.items.len);
+        try testing.expectEqualStrings("task-001", task_list.tasks.items[0].id);
+        try testing.expectEqualStrings("Valid task", task_list.tasks.items[0].content);
+    }
+
+    // Test invalid next_id - should default to 1
+    {
+        var task_list = try TaskList.fromJson(allocator, "next_id:invalid");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(u32, 1), task_list.next_id);
+    }
+
+    // Test invalid timestamps - should default to 0
+    {
+        var task_list = try TaskList.fromJson(allocator, "task:task-001|Content|pending|not_a_number|");
+        defer task_list.deinit(allocator);
+        try testing.expectEqual(@as(usize, 1), task_list.tasks.items.len);
+        try testing.expectEqual(@as(i64, 0), task_list.tasks.items[0].created);
+    }
+}
+
+test "TaskList.generateId - collision free" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var task_list = TaskList.init(allocator);
+    defer task_list.deinit(allocator);
+
+    // Generate several IDs and ensure they're unique
+    const id1 = try task_list.generateId(allocator);
+    const id2 = try task_list.generateId(allocator);
+    const id3 = try task_list.generateId(allocator);
+
+    try testing.expectEqualStrings("task-001", id1);
+    try testing.expectEqualStrings("task-002", id2);
+    try testing.expectEqualStrings("task-003", id3);
+
+    // Verify next_id was incremented
+    try testing.expectEqual(@as(u32, 4), task_list.next_id);
+
+    allocator.free(id1);
+    allocator.free(id2);
+    allocator.free(id3);
+}
+
+test "TaskList.generateId - continues from loaded state" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Simulate loading a task list that already has tasks
+    var task_list = try TaskList.fromJson(allocator, "next_id:42\ntask:task-041|Existing task|pending|0|");
+    defer task_list.deinit(allocator);
+
+    // Generate new ID should continue from 42
+    const new_id = try task_list.generateId(allocator);
+    defer allocator.free(new_id);
+
+    try testing.expectEqualStrings("task-042", new_id);
+    try testing.expectEqual(@as(u32, 43), task_list.next_id);
 }
