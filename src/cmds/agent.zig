@@ -25,7 +25,6 @@ const run_help =
     \\Execute RALPH loop to automatically complete tasks.
     \\
     \\Options:
-    \\  --model <model>      Model to use (optional, uses executor default)
     \\  --once               Run only one task, then exit
     \\  --dry-run            Show what would run without executing
     \\  --delay <seconds>    Delay between tasks (default: 2)
@@ -93,7 +92,6 @@ fn logToFile(allocator: std.mem.Allocator, file: ?std.fs.File, comptime fmt: []c
 fn buildExecutorArgs(
     allocator: std.mem.Allocator,
     executor: []const u8,
-    model: ?[]const u8,
     agent_cmd: ?[]const u8,
     prompt: []const u8,
     interactive: bool,
@@ -110,27 +108,16 @@ fn buildExecutorArgs(
     } else if (std.mem.eql(u8, executor, "claude")) {
         try args.append(allocator, "claude");
         if (!interactive) {
-            // Use -p (print mode) for headless/non-interactive execution
             try args.append(allocator, "-p");
-        }
-        if (model) |m| {
-            try args.append(allocator, "--model");
-            try args.append(allocator, m);
         }
         try args.append(allocator, prompt);
     } else if (std.mem.eql(u8, executor, "opencode")) {
         try args.append(allocator, "opencode");
         if (!interactive) {
-            // Use 'run' subcommand for headless execution
             try args.append(allocator, "run");
-        }
-        if (model) |m| {
-            try args.append(allocator, "-m");
-            try args.append(allocator, m);
         }
         try args.append(allocator, prompt);
     } else {
-        // Fallback: split executor as command
         var parts = std.mem.splitScalar(u8, executor, ' ');
         while (parts.next()) |part| {
             if (part.len > 0) try args.append(allocator, part);
@@ -404,7 +391,7 @@ fn runPlan(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
     }
 
     // Build and execute command in interactive mode (user converses with agent)
-    var runner_args = buildExecutorArgs(allocator, executor, null, agent_cmd, prompt, true) catch return Error.OutOfMemory;
+    var runner_args = buildExecutorArgs(allocator, executor, agent_cmd, prompt, true) catch return Error.OutOfMemory;
     defer runner_args.deinit(allocator);
 
     var child = std.process.Child.init(runner_args.items, allocator);
@@ -461,7 +448,6 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
     const stderr = std.fs.File.stderr().deprecatedWriter();
 
     // Parse command options
-    var model: ?[]const u8 = null;
     var once = false;
     var dry_run = false;
     var delay: u32 = 2;
@@ -471,14 +457,7 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
     while (i < args.len) {
         const arg = std.mem.sliceTo(args[i], 0);
 
-        if (std.mem.eql(u8, arg, "--model")) {
-            i += 1;
-            if (i >= args.len) {
-                stdout.print("error: --model requires a model name\n", .{}) catch {};
-                return Error.InvalidCommand;
-            }
-            model = std.mem.sliceTo(args[i], 0);
-        } else if (std.mem.eql(u8, arg, "--once")) {
+        if (std.mem.eql(u8, arg, "--once")) {
             once = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             dry_run = true;
@@ -576,11 +555,7 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
     if (dry_run) {
         stdout.print("(dry-run mode - no commands will be executed)\n", .{}) catch {};
     }
-    stdout.print("Executor: {s}", .{executor}) catch {};
-    if (model) |m| {
-        stdout.print(" (model: {s})", .{m}) catch {};
-    }
-    stdout.print("\n\n", .{}) catch {};
+    stdout.print("Executor: {s}\n\n", .{executor}) catch {};
 
     while (true) {
         if (max_tasks) |max| {
@@ -631,7 +606,7 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
             stdout.print("\n", .{}) catch {};
             tasks_completed += 1;
         } else {
-            const success = executeTask(allocator, executor, model, agent_cmd, exe_path, task.id, task.content) catch false;
+            const success = executeTask(allocator, executor, agent_cmd, exe_path, task.id, task.content) catch false;
 
             if (success) {
                 updateFailureCount(allocator, &consecutive_failures, task.id, 0);
@@ -753,14 +728,14 @@ fn createPrompt(allocator: std.mem.Allocator, executor: []const u8, exe_path: []
     , .{ task_id, task_content, exe_path, docs_file });
 }
 
-fn executeTask(allocator: std.mem.Allocator, executor: []const u8, model: ?[]const u8, agent_cmd: ?[]const u8, exe_path: []const u8, task_id: []const u8, task_content: []const u8) !bool {
+fn executeTask(allocator: std.mem.Allocator, executor: []const u8, agent_cmd: ?[]const u8, exe_path: []const u8, task_id: []const u8, task_content: []const u8) !bool {
     const stderr = std.fs.File.stderr().deprecatedWriter();
 
     const prompt = try createPrompt(allocator, executor, exe_path, task_id, task_content);
     defer allocator.free(prompt);
 
     // Use headless mode (interactive=false) for autonomous task execution
-    var runner_args = try buildExecutorArgs(allocator, executor, model, agent_cmd, prompt, false);
+    var runner_args = try buildExecutorArgs(allocator, executor, agent_cmd, prompt, false);
     defer runner_args.deinit(allocator);
 
     var child = std.process.Child.init(runner_args.items, allocator);

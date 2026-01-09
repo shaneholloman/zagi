@@ -95,9 +95,6 @@ zagi agent run --delay 5
 
 # Safety limit - stop after N tasks
 zagi agent run --max-tasks 10
-
-# Specify a model
-zagi agent run --model claude-sonnet-4-20250514
 ```
 
 The run loop will:
