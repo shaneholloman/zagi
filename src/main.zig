@@ -7,6 +7,7 @@ const alias = @import("cmds/alias.zig");
 const commit = @import("cmds/commit.zig");
 const diff = @import("cmds/diff.zig");
 const fork = @import("cmds/fork.zig");
+const tasks = @import("cmds/tasks.zig");
 const git = @import("cmds/git.zig");
 
 const version = "0.1.0";
@@ -19,6 +20,7 @@ const Command = enum {
     commit_cmd,
     diff_cmd,
     fork_cmd,
+    tasks_cmd,
     other,
 };
 
@@ -94,6 +96,9 @@ fn run(allocator: std.mem.Allocator, args: [][:0]u8) !void {
     } else if (std.mem.eql(u8, cmd, "fork")) {
         current_command = .fork_cmd;
         try fork.run(allocator, args);
+    } else if (std.mem.eql(u8, cmd, "tasks")) {
+        current_command = .tasks_cmd;
+        try tasks.run(allocator, args);
     } else {
         // Unknown command: pass through to git
         current_command = .other;
@@ -115,6 +120,7 @@ fn printHelp(stdout: anytype) !void {
         \\  add       Stage files for commit
         \\  commit    Create a commit
         \\  fork      Manage parallel worktrees
+        \\  tasks     Task management for git repositories
         \\  alias     Create an alias to git
         \\
         \\options:
@@ -202,6 +208,7 @@ fn printUsageHelp(stderr: anytype, cmd: Command) void {
         .alias_cmd => alias.help,
         .diff_cmd => diff.help,
         .fork_cmd => fork.help,
+        .tasks_cmd => tasks.help,
         .other => "usage: git <command> [args...]\n",
     };
 
