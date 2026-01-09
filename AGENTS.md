@@ -28,20 +28,32 @@ Example:
 git commit -m "Add logout button" --prompt "Add a logout button to the header. When clicked it should clear the session and redirect to /login"
 ```
 
-View prompts with:
+When `--prompt` is used, zagi automatically stores metadata in git notes:
+- `refs/notes/agent` - detected AI agent (claude, opencode, cursor, windsurf, vscode, terminal)
+- `refs/notes/prompt` - the user prompt text
+- `refs/notes/session` - full session transcript (for Claude Code, OpenCode)
+
+View metadata with:
 ```bash
-git log --prompts
+git log --prompts   # show prompts (truncated to 200 chars)
+git log --agent     # show which AI agent made each commit
+git log --session   # show session transcript (paginated, first 20k bytes)
+git log --session --session-offset=20000  # continue from byte 20000
 ```
 
-### Environment Setup
+### Agent Mode
 
-Set `ZAGI_AGENT` to enable prompt enforcement:
+Agent mode is automatically enabled when running inside AI tools:
+- Claude Code (sets `CLAUDECODE=1`)
+- OpenCode (sets `OPENCODE=1`)
+- VS Code, Cursor, Windsurf (detected from terminal environment)
 
+You can also enable it manually:
 ```bash
-export ZAGI_AGENT=claude-code
+export ZAGI_AGENT=my-agent
 ```
 
-When this is set:
+When agent mode is active:
 1. `git commit` will fail without `--prompt`, ensuring all AI-generated commits have their prompts recorded
 2. Destructive commands are blocked to prevent data loss
 

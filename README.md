@@ -69,40 +69,35 @@ git fork --delete-all
 
 ### Agent mode
 
-Set `ZAGI_AGENT` to enable agent-specific features.
+Agent mode is automatically enabled when running inside AI tools (Claude Code, OpenCode, Cursor, Windsurf, VS Code). You can also enable it manually:
 
 ```bash
-export ZAGI_AGENT=claude-code
+export ZAGI_AGENT=my-agent
 ```
-
-The value can be any string describing your agent (e.g. `claude-code`, `cursor`, `opencode`) - this will be used in future features for agent-specific behavior.
 
 This enables:
 - **Prompt tracking**: `git commit` requires `--prompt` to record the user request that created the commit
+- **AI attribution**: Automatically detects and stores which AI agent made the commit
 - **Guardrails**: Blocks destructive commands (`reset --hard`, `checkout .`, `clean -f`, `push --force`) to prevent data loss
 
 ```bash
-git commit -m "Add feature" --prompt "Add a logout button to the header.."
-git log --prompts  # view prompts
+git commit -m "Add feature" --prompt "Add a logout button to the header"
+git log --prompts   # view prompts
+git log --agent     # view which AI agent made commits
+git log --session   # view full session transcript (with pagination)
 ```
 
-To prevent child processes from overriding `ZAGI_AGENT`, make it readonly:
-
-```bash
-# bash/zsh
-export ZAGI_AGENT=claude-code
-readonly ZAGI_AGENT
-```
+Metadata is stored in git notes (`refs/notes/agent`, `refs/notes/prompt`, `refs/notes/session`) which are local by default and don't affect commit history.
 
 ### Environment variables
 
 | Variable | Description | Default | Valid values |
 |----------|-------------|---------|--------------|
-| `ZAGI_AGENT` | Enables guardrails and prompt enforcement. Also selects the built-in executor for `zagi agent` commands. | (unset) | Any string enables guardrails. For executors: `claude`, `opencode` |
+| `ZAGI_AGENT` | Manually enable agent mode. Auto-detected from `CLAUDECODE`, `OPENCODE`, or IDE environment. | (auto) | Any string enables agent mode. For executors: `claude`, `opencode` |
 | `ZAGI_AGENT_CMD` | Custom executor command override. When set, the prompt is appended as the final argument. | (unset) | Any shell command (e.g., `aider --yes`) |
 | `ZAGI_STRIP_COAUTHORS` | Strips `Co-Authored-By:` lines from commit messages. | (unset) | `1` to enable |
 
-**Executor precedence**: If `ZAGI_AGENT_CMD` is set, it overrides `ZAGI_AGENT` for executor selection. The guardrails remain active regardless.
+**Agent detection**: Agent mode is automatically enabled when `CLAUDECODE=1` or `OPENCODE=1` is set (by Claude Code or OpenCode), or when running in VS Code/Cursor/Windsurf terminals.
 
 ```bash
 # Use Claude Code (default)

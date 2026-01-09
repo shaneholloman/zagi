@@ -19,7 +19,7 @@ zagi agent commands (`agent plan`, `agent run`) use AI agents to execute tasks. 
 
 ### ZAGI_AGENT
 
-Select a built-in executor:
+Select a built-in executor for `zagi agent` commands:
 
 ```bash
 # Use Claude Code (default)
@@ -29,7 +29,9 @@ ZAGI_AGENT=claude zagi agent run
 ZAGI_AGENT=opencode zagi agent run
 ```
 
-Valid values: `claude`, `opencode`
+Valid values for executors: `claude`, `opencode`
+
+Note: Agent mode (guardrails, `--prompt` requirement) is auto-detected from the environment. Setting `ZAGI_AGENT` also enables agent mode, but this is primarily for selecting the executor.
 
 Built-in executors automatically handle mode flags:
 - `claude`: adds `-p` for headless mode (`agent run`)
@@ -75,7 +77,7 @@ When only `ZAGI_AGENT_CMD` is set (no `ZAGI_AGENT`), the command is used as-is w
 
 ### Agent Mode Safety
 
-When `ZAGI_AGENT` is set, destructive git commands are blocked to prevent data loss. See [AGENTS.md](../AGENTS.md#blocked-commands-in-agent-mode) for the full list.
+Agent mode is automatically enabled when running inside AI tools (Claude Code, OpenCode, Cursor, Windsurf, VS Code) or when `ZAGI_AGENT` is set. When active, destructive git commands are blocked to prevent data loss. See [AGENTS.md](../AGENTS.md#blocked-commands-in-agent-mode) for the full list.
 
 ## Log Files
 
