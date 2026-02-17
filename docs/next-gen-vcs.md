@@ -29,37 +29,54 @@ $ cd zagi
 $ zig build test    # works. no install. no README.
 ```
 
-## No Lock Files
+## No Manifests, No Lock Files
 
-Lock files exist because dependencies are external. You declare what
-you want (`package.json`), a solver figures out what that means
-(`package-lock.json`), and at install time you hope the registry still
-has those exact versions. The lock file is a prayer that the external
-world hasn't changed.
+The old paradigm has three steps: declare (package.json), resolve
+(package-lock.json), install (node_modules). Three places to get
+wrong. Three files to keep in sync.
 
-**If the dependency is in the repo, you don't need a lock file.**
-
-zagi tracks dependencies the same way it tracks source: as
-content-addressed objects in the store. When you `zagi add express@4`,
-the actual code of express and all its transitive deps is pulled,
-hashed, and stored. It's in your project now. Not a pointer to npm.
-Not a version range. The code.
+zagi has one step: **add.**
 
 ```
+$ zagi add node@22
+
+Fetching node 22.0.0 (linux-x64)...
+Stored: 42 MB (6,241 chunks, 94% deduped from store)
+
 $ zagi add express@4
 
 Resolving express@4.21.0 + 62 deps...
-Stored: 4.2 MB (1847 chunks, 89% deduped from store)
+Stored: 4.2 MB (1,847 chunks, 89% deduped from store)
 ```
 
-The dependency source lives in the content-addressed store, referenced
-by your project. `zagi log` shows it as a change like any other:
+The actual code -- source, binaries, everything -- goes into the
+content-addressed store. It's tracked. That's it. No manifest file
+declaring what you need. No lock file pinning versions. No install
+command fetching things later. The tracked state IS the manifest.
+
+Want to know what your project uses? Ask:
+
+```
+$ zagi deps
+  node       22.0.0     (tool)
+  express    4.21.0     (dep, 62 transitive)
+  postgres   16.4       (service)
+
+$ zagi deps express
+  express    4.21.0     4.2 MB  1,847 chunks
+    accepts@1.3.8, array-flatten@1.1.1, body-parser@1.20.3, ...
+```
+
+That's a view into the tracked state, not a file. There's no config
+file to get out of sync because there is no config file.
+
+`zagi log` shows deps as changes like any other:
 
 ```
 $ zagi log
   @  kpqx  matt: wip auth routes
   o  vrnt  matt: add express@4.21.0 (62 deps)
-  o  zspm  matt: init project + node@22
+  o  zspm  matt: add node@22
   o  root
 ```
 
@@ -126,9 +143,10 @@ The hook activates the environment when you `cd` into a zagi project
 (prepends `.zagi/env/bin` to PATH, sets library paths) and deactivates
 when you leave.
 
-**Line 2: Clone.** Fetches source and the full environment in parallel
-from the content-addressed store. Dependencies, tools, services -- all
-pre-built for your OS/arch. Downloaded, not compiled, not installed.
+**Line 2: Clone.** Fetches everything from the content-addressed store:
+source, dependencies, tools, services -- all pre-built for your OS/arch.
+No manifest to read. No dependencies to resolve. The tracked state tells
+zagi exactly what chunks to download.
 
 **Line 3: cd.** Shell hook fires. Environment is active.
 
@@ -260,17 +278,17 @@ No package manager, no solver, no build system on the client.
 
 ### The server
 
-The server has Nix. When a new dependency is added or an env spec
-changes, the server:
+The server has Nix. When `zagi add node@22` or `zagi add express@4`
+is run, the server:
 
-1. Resolves dependencies
-2. Builds everything (or pulls from Nix binary cache)
+1. Resolves the package and transitive deps
+2. Builds or fetches pre-built binaries (Nix binary cache)
 3. Chunks the result (content-defined chunking)
 4. Deduplicates against the global store
-5. Stores new chunks in packs in object storage
+5. Stores new chunks in packs, returns chunk hashes to client
 
-For mirrored repos, the server also parses lockfiles and existing
-package manifests to generate the initial env spec.
+For mirrored repos, the server reads existing lockfiles to figure
+out what to resolve and add.
 
 ### Object storage
 
@@ -367,17 +385,17 @@ $ <it runs>
 1. **Content-addressed store.** Chunking, dedup, pack storage.
    This is the foundation everything else sits on.
 
-2. **Dependency tracking.** `zagi add express@4` resolves, chunks,
-   and stores deps. No lock file. Source is in the store.
+2. **`zagi add`.** Resolve a package or tool, chunk it, store it,
+   track it as a change. This replaces package.json, lock files,
+   and install commands.
 
-3. **Auto-detection.** Infer deps from existing lockfiles for
-   migration. JS/TS, Python, Rust, Go, Zig first.
+3. **`zagi clone`.** Fetch the tracked state from the server,
+   download chunks (deduped against local store), assemble files,
+   activate env. One command, everything works.
 
-4. **Server-side builds.** Compile env specs to Nix, build tools
-   and runtimes, chunk and store in object storage.
+4. **Server-side builds.** Nix builds tools and runtimes, chunks
+   the result, stores in object storage.
 
-5. **Clone.** Fetch manifest, download chunks (deduped against
-   local store), assemble files, activate env.
-
-6. **Mirror.** `zagi mirror github.com/foo/bar` converts a GitHub
+5. **Mirror.** `zagi mirror github.com/foo/bar` reads existing
+   lockfiles, runs `zagi add` for everything, converts a GitHub
    repo into a fully tracked zagi project. Viral loop.
