@@ -45,6 +45,11 @@ pub const Pattern = union(enum) {
         cmd: []const u8,
         sub: []const u8,
     },
+    /// Command + argument starting with prefix (e.g., "push" + ":" for refspec delete)
+    cmd_with_arg_prefix: struct {
+        cmd: []const u8,
+        prefix: []const u8,
+    },
 };
 
 /// Commands that cause unrecoverable data loss.
@@ -52,11 +57,11 @@ pub const blocked_commands = [_]BlockedCommand{
     // Working tree destroyers
     .{
         .pattern = .{ .cmd_with_flag = .{ .cmd = "reset", .flag = "--hard" } },
-        .reason = "discards all uncommitted changes (unrecoverable)",
+        .reason = "discards all uncommitted changes",
     },
     .{
         .pattern = .{ .cmd_with_arg = .{ .cmd = "checkout", .arg = "." } },
-        .reason = "discards all working tree changes (unrecoverable)",
+        .reason = "discards all working tree changes",
     },
     .{
         .pattern = .{ .cmd_with_any_flag = .{ .cmd = "clean", .flags = &.{ "-f", "--force", "-fd", "-fx", "-fxd", "-d", "-x" } } },
@@ -64,17 +69,27 @@ pub const blocked_commands = [_]BlockedCommand{
     },
     .{
         .pattern = .{ .cmd_with_arg = .{ .cmd = "restore", .arg = "." } },
-        .reason = "discards all working tree changes (unrecoverable)",
+        .reason = "discards all working tree changes",
     },
     .{
         .pattern = .{ .cmd_with_flag = .{ .cmd = "restore", .flag = "--worktree" } },
-        .reason = "discards working tree changes (unrecoverable)",
+        .reason = "discards working tree changes",
     },
 
     // Remote history destroyers
     .{
         .pattern = .{ .cmd_with_any_flag = .{ .cmd = "push", .flags = &.{ "-f", "--force", "--force-with-lease", "--force-if-includes" } } },
-        .reason = "overwrites remote history (may cause data loss for collaborators)",
+        .reason = "overwrites remote history",
+    },
+
+    // Remote branch deleters
+    .{
+        .pattern = .{ .cmd_with_any_flag = .{ .cmd = "push", .flags = &.{ "--delete", "-d" } } },
+        .reason = "deletes remote branch",
+    },
+    .{
+        .pattern = .{ .cmd_with_arg_prefix = .{ .cmd = "push", .prefix = ":" } },
+        .reason = "deletes remote branch via refspec syntax",
     },
 
     // Stash destroyers
@@ -90,7 +105,7 @@ pub const blocked_commands = [_]BlockedCommand{
     // Branch force delete
     .{
         .pattern = .{ .cmd_with_flag = .{ .cmd = "branch", .flag = "-D" } },
-        .reason = "force deletes branch even if not merged (potential data loss)",
+        .reason = "force deletes branch even if not merged",
     },
 };
 
@@ -156,6 +171,10 @@ fn matchesPattern(cmd: []const u8, rest: []const [:0]const u8, pattern: Pattern)
             if (rest.len == 0) return false;
             return std.mem.eql(u8, std.mem.sliceTo(rest[0], 0), p.sub);
         },
+        .cmd_with_arg_prefix => |p| {
+            if (!std.mem.eql(u8, cmd, p.cmd)) return false;
+            return hasArgWithPrefix(rest, p.prefix);
+        },
     }
 }
 
@@ -180,6 +199,14 @@ fn hasArg(args: []const [:0]const u8, target: []const u8) bool {
     for (args) |arg_ptr| {
         const arg = std.mem.sliceTo(arg_ptr, 0);
         if (std.mem.eql(u8, arg, target)) return true;
+    }
+    return false;
+}
+
+fn hasArgWithPrefix(args: []const [:0]const u8, prefix: []const u8) bool {
+    for (args) |arg_ptr| {
+        const arg = std.mem.sliceTo(arg_ptr, 0);
+        if (arg.len > prefix.len and std.mem.startsWith(u8, arg, prefix)) return true;
     }
     return false;
 }
@@ -267,6 +294,26 @@ test "blocks push -f" {
 
 test "allows push" {
     const args = toArgs(&.{ "git", "push", "origin", "main" });
+    try testing.expect(checkBlocked(&args) == null);
+}
+
+test "blocks push --delete" {
+    const args = toArgs(&.{ "git", "push", "origin", "--delete", "feature" });
+    try testing.expect(checkBlocked(&args) != null);
+}
+
+test "blocks push -d (delete)" {
+    const args = toArgs(&.{ "git", "push", "origin", "-d", "feature" });
+    try testing.expect(checkBlocked(&args) != null);
+}
+
+test "blocks push refspec delete syntax" {
+    const args = toArgs(&.{ "git", "push", "origin", ":feature" });
+    try testing.expect(checkBlocked(&args) != null);
+}
+
+test "allows push with normal refspec" {
+    const args = toArgs(&.{ "git", "push", "origin", "feature:feature" });
     try testing.expect(checkBlocked(&args) == null);
 }
 

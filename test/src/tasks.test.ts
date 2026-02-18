@@ -292,8 +292,8 @@ describe("zagi tasks delete", () => {
     });
 
     expect(result).toContain("error: delete command blocked");
-    expect(result).toContain("ZAGI_AGENT is set");
     expect(result).toContain("permanent data loss");
+    expect(result).toContain("ask the user to delete this task");
   });
 
   test("succeeds when not in agent mode", () => {

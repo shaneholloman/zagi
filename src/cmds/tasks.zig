@@ -1021,7 +1021,7 @@ fn runEdit(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_repositor
     // Block edit in agent mode - agents should use append instead
     const detect = @import("detect.zig");
     if (detect.isAgentMode()) {
-        stdout.print("error: edit command blocked (ZAGI_AGENT is set)\n", .{}) catch {};
+        stdout.print("error: edit command blocked\n", .{}) catch {};
         stdout.print("hint: use 'tasks append' to add notes to a task\n", .{}) catch {};
         return Error.InvalidCommand;
     }
@@ -1207,8 +1207,9 @@ fn runDelete(allocator: std.mem.Allocator, args: [][:0]u8, repo: ?*c.git_reposit
     // Check if we should block this operation in agent mode
     const detect = @import("detect.zig");
     if (detect.isAgentMode()) {
-        stdout.print("error: delete command blocked (ZAGI_AGENT is set)\n", .{}) catch {};
+        stdout.print("error: delete command blocked\n", .{}) catch {};
         stdout.print("reason: deleting tasks causes permanent data loss\n", .{}) catch {};
+        stdout.print("hint: ask the user to delete this task themselves, then confirm with you when done\n", .{}) catch {};
         return Error.InvalidCommand;
     }
 
