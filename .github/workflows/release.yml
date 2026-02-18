@@ -38,6 +38,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Zig
         run: |
@@ -46,11 +48,11 @@ jobs:
 
       - name: Build (native)
         if: matrix.target == 'native'
-        run: zig build -Doptimize=ReleaseFast
+        run: zig build -Doptimize=ReleaseFast -Dversion=${GITHUB_REF_NAME#v}
 
       - name: Build (cross-compile)
         if: matrix.target != 'native'
-        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }} -Dversion=${GITHUB_REF_NAME#v}
 
       - name: Package
         run: |
