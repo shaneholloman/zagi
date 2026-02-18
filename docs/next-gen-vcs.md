@@ -19,8 +19,8 @@ holding it all together with string.
 ## One Idea
 
 Version control where everything is tracked. Source, dependencies,
-tools, services. No lock files. No install step. No separate package
-manager. One system.
+tools, services. No install step on clone. Use your existing package
+manager, zagi tracks the result. One system.
 
 ```
 $ curl -sf zagi.sh | sh
@@ -29,54 +29,49 @@ $ cd zagi
 $ zig build test    # works. no install. no README.
 ```
 
-## No Manifests, No Lock Files
+## Use Your Tools, Track Everything
 
-The old paradigm has three steps: declare (package.json), resolve
-(package-lock.json), install (node_modules). Three places to get
-wrong. Three files to keep in sync.
-
-zagi has one step: **add.**
+zagi doesn't replace your package manager. npm knows how to resolve
+node packages. pip knows Python. cargo knows Rust. Let them do their
+job. zagi's job is to **track the result**.
 
 ```
-$ zagi add node@22
-
-Fetching node 22.0.0 (linux-x64)...
-Stored: 42 MB (6,241 chunks, 94% deduped from store)
-
-$ zagi add express@4
-
-Resolving express@4.21.0 + 62 deps...
-Stored: 4.2 MB (1,847 chunks, 89% deduped from store)
+$ zagi add node@22             # env: zagi handles tools and services
+$ npm i express                # deps: npm does what npm does
+$ zagi commit -m "add express" # zagi chunks and tracks node_modules
 ```
 
-The actual code -- source, binaries, everything -- goes into the
-content-addressed store. It's tracked. That's it. No manifest file
-declaring what you need. No lock file pinning versions. No install
-command fetching things later. The tracked state IS the manifest.
+That's it. npm writes to `node_modules`. zagi sees the change, chunks
+it, content-addresses it, deduplicates it against the global store.
+The dependency is now tracked the same way source is tracked. No lock
+file needed on the consumer side -- the actual code is in the store.
 
-Want to know what your project uses? Ask:
+`zagi add` is for **environment stuff** -- tools and services that
+don't have their own package manager:
 
 ```
-$ zagi deps
-  node       22.0.0     (tool)
-  express    4.21.0     (dep, 62 transitive)
-  postgres   16.4       (service)
-
-$ zagi deps express
-  express    4.21.0     4.2 MB  1,847 chunks
-    accepts@1.3.8, array-flatten@1.1.1, body-parser@1.20.3, ...
+$ zagi add node@22        # runtime/tool
+$ zagi add postgres@16    # service
+$ zagi add zig@0.15       # compiler
 ```
 
-That's a view into the tracked state, not a file. There's no config
-file to get out of sync because there is no config file.
+For everything else, use the native package manager. It already
+knows what it's doing.
 
-`zagi log` shows deps as changes like any other:
+```
+$ npm i express           # node packages
+$ pip install flask       # python packages
+$ cargo add serde         # rust crates
+$ zagi commit -m "add deps"
+```
+
+zagi tracks the result. The log shows everything:
 
 ```
 $ zagi log
   @  kpqx  matt: wip auth routes
-  o  vrnt  matt: add express@4.21.0 (62 deps)
-  o  zspm  matt: add node@22
+  o  vrnt  matt: add express (npm i)
+  o  zspm  matt: add node@22, postgres@16
   o  root
 ```
 
@@ -86,39 +81,41 @@ history. One graph.
 
 ### Edit your dependencies
 
-Want to patch a bug in a dependency? Just edit it.
+Want to patch a bug in a dependency? Just edit it. It's tracked.
 
 ```
-$ zagi edit express         # opens node_modules/express in your editor
-                            # or an agent just edits the files directly
+$ vim node_modules/express/lib/router/index.js   # just edit it
+$ zagi commit -m "fix express body-parser edge case"
 
 $ zagi log
   @  mfpz  matt: fix express body-parser edge case
-  o  vrnt  matt: add express@4.21.0 (62 deps)
+  o  vrnt  matt: add express (npm i)
 ```
 
-When express releases 4.21.1, you upgrade and your change is
-re-applied automatically (jj-style conflict resolution). If it
-conflicts, the conflict is data -- you or an agent resolve it.
-No patch files. No fork. Just tracked changes on tracked code.
+When express releases a new version, you `npm update express` and
+commit. Your patch is re-applied automatically (jj-style conflict
+resolution). If it conflicts, the conflict is data -- you or an
+agent resolve it. No patch files. No fork. Just tracked changes on
+tracked code.
 
 Agents are great at this. "Update express and re-apply our body-parser
 fix" is a one-shot prompt.
 
 ### Supply chain security
 
-npm install runs arbitrary postinstall scripts from strangers. Every
-`npm install` is a supply chain attack waiting to happen.
+Today, every `npm install` on every machine runs postinstall scripts
+from strangers. Every CI run, every new developer, every `git clone`
+triggers arbitrary code execution from the registry.
 
-zagi doesn't run install scripts. It stores source and pre-built
-binaries. The code is content-hashed. If someone publishes a
-compromised version of a package, it has a different hash. Your
-project still points to the original hash. Nothing changes unless
-you explicitly upgrade.
+With zagi, `npm install` runs **once** -- on the developer's machine
+who adds the dependency. The result is chunked, hashed, and tracked.
+Everyone else gets the pre-built, content-addressed result. No
+postinstall scripts. No registry fetch. The code you reviewed is the
+code everyone runs.
 
-No lock file to confuse. No registry to compromise at install time.
-No postinstall scripts executing on your machine. The code you
-reviewed is the code you run.
+If someone publishes a compromised version of a package, it has a
+different hash. Your project still points to the original hash.
+Nothing changes unless someone explicitly upgrades and commits.
 
 ## User Experience
 
@@ -169,18 +166,20 @@ choose them.
 ### Day-to-day
 
 ```
-$ zagi add postgres@16      # adds postgres to the environment
-$ zagi add lodash@4         # adds lodash source to deps
+$ zagi add postgres@16      # env: tool/service
+$ npm i lodash              # deps: use npm
+$ zagi commit -m "add lodash, postgres"
 $ zagi checkout feature     # switches source AND env atomically
 
 $ zagi log
   @  kpqx  matt: wip feature
-  o  vrnt  matt: add lodash@4, postgres@16
+  o  vrnt  matt: add lodash, postgres@16
   o  main
 ```
 
-No `npm install`. No `docker-compose up`. No `brew install postgresql`.
-Adding a dependency is a change. Switching branches switches everything.
+No `docker-compose up`. No `brew install postgresql`. No second
+`npm install` on another machine. Switching branches switches
+everything -- source, deps, tools, services.
 
 ## How Storage Works
 
@@ -278,17 +277,19 @@ No package manager, no solver, no build system on the client.
 
 ### The server
 
-The server has Nix. When `zagi add node@22` or `zagi add express@4`
-is run, the server:
+The server has Nix. It handles two things:
 
-1. Resolves the package and transitive deps
+**Environment builds** (`zagi add node@22`):
+1. Resolves the tool/service via Nix
 2. Builds or fetches pre-built binaries (Nix binary cache)
-3. Chunks the result (content-defined chunking)
-4. Deduplicates against the global store
-5. Stores new chunks in packs, returns chunk hashes to client
+3. Chunks the result, deduplicates, stores in packs
 
-For mirrored repos, the server reads existing lockfiles to figure
-out what to resolve and add.
+**Dependency tracking** (`zagi commit` after `npm i`):
+1. Client chunks node_modules (or venv, target, etc.)
+2. Client sends new chunks to server
+3. Server deduplicates against global store, stores in packs
+
+The server never runs npm/pip/cargo. It just stores chunks.
 
 ### Object storage
 
@@ -350,10 +351,11 @@ Encrypted in the repo, isolated from agents:
 
 ## Why Not X
 
-**Why not npm/pip/cargo + lock files?**
-Lock files are a workaround for external dependencies. If deps are
-tracked in the VCS, lock files are unnecessary. And install scripts
-are a supply chain attack surface.
+**Why not just npm/pip/cargo?**
+You DO use npm/pip/cargo. zagi doesn't replace them. But today,
+every machine that clones the repo has to re-run `npm install`,
+re-fetch from the registry, re-run postinstall scripts. zagi
+tracks the result so nobody has to do that twice.
 
 **Why not vendoring (Go-style)?**
 Go vendor copies deps into the repo as regular files. This bloats git
@@ -385,17 +387,22 @@ $ <it runs>
 1. **Content-addressed store.** Chunking, dedup, pack storage.
    This is the foundation everything else sits on.
 
-2. **`zagi add`.** Resolve a package or tool, chunk it, store it,
-   track it as a change. This replaces package.json, lock files,
-   and install commands.
+2. **`zagi add` (env).** Add tools (`node@22`) and services
+   (`postgres@16`) to the environment. Server resolves and builds
+   via Nix, chunks the result.
 
-3. **`zagi clone`.** Fetch the tracked state from the server,
+3. **`zagi commit` (deps).** Use npm/pip/cargo as normal. Commit
+   the result. zagi chunks and tracks node_modules/venv/target
+   the same way it tracks source. No lock file needed on clone.
+
+4. **`zagi clone`.** Fetch the tracked state from the server,
    download chunks (deduped against local store), assemble files,
    activate env. One command, everything works.
 
-4. **Server-side builds.** Nix builds tools and runtimes, chunks
-   the result, stores in object storage.
+5. **Server-side builds.** Nix builds tools and runtimes for
+   `zagi add`. Chunks the result, stores in object storage.
 
-5. **Mirror.** `zagi mirror github.com/foo/bar` reads existing
-   lockfiles, runs `zagi add` for everything, converts a GitHub
-   repo into a fully tracked zagi project. Viral loop.
+6. **Mirror.** `zagi mirror github.com/foo/bar` reads existing
+   lockfiles, runs the native package manager + `zagi add` for
+   env, converts a GitHub repo into a fully tracked zagi project.
+   Viral loop.
